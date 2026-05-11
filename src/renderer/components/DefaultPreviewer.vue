@@ -1,5 +1,5 @@
 <template>
-  <div ref="refPreviewer" :class="{'default-previewer': true}">
+  <div ref="refPreviewer" :class="{'default-previewer': true, presentation}">
     <div v-show="scrollTop > 0" class="scroll-decoration"></div>
     <div v-if="heads && heads.length > 0" :class="{outline: true, pined: pinOutline}">
       <div class="outline-title">
@@ -14,6 +14,7 @@
       </div>
     </div>
     <div :class="{'scroll-to-top': true, 'hide': scrollTop < 30}" @click="scrollToTop">TOP</div>
+    <FindInPreview />
     <XIFrame
       v-if="iframeVisible"
       global-style
@@ -29,7 +30,6 @@
 </template>
 
 <script lang="tsx" setup>
-import { useStore } from 'vuex'
 import { computed, defineComponent, h, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { IFrame as XIFrame } from '@fe/support/embed'
 import { getLogger } from '@fe/utils'
@@ -38,16 +38,18 @@ import { disableSyncScrollAwhile, getHeadings, getViewDom, Heading, scrollTopTo 
 import { printCurrentDocument, toggleExportPanel } from '@fe/services/export'
 import { useI18n } from '@fe/services/i18n'
 import { getEditor } from '@fe/services/editor'
-import type { AppState } from '@fe/support/store'
 import { useToast } from '@fe/support/ui/toast'
 import { isElectron } from '@fe/support/env'
+import { FileTabs } from '@fe/services/workbench'
+import { isMarkdownFile } from '@fe/services/document'
+import store from '@fe/support/store'
 import type { Components } from '@fe/types'
+import { CSS_VAR_NAME } from '@fe/support/args'
 
 import DefaultPreviewerRender from './DefaultPreviewerRender.ce.vue'
 import SvgIcon from './SvgIcon.vue'
 import Outline from './Outline.vue'
-import { FileTabs } from '@fe/services/workbench'
-import { isMarkdownFile } from '@fe/services/document'
+import FindInPreview from './FindInPreview.vue'
 
 const { t } = useI18n()
 
@@ -61,9 +63,8 @@ const iframeProps = {
 
 const initHTML = '<div id="app">Loading……</div>'
 
-const store = useStore<AppState>()
-
 const filePath = computed(() => store.state.currentFile?.path)
+const presentation = computed(() => store.state.presentation)
 
 const container = shallowRef<HTMLIFrameElement | null>(null)
 const height = ref(768)
@@ -188,7 +189,7 @@ const Progress = defineComponent({
     const offset = computed(() => 38 - (props.done / props.total) * 38)
     const percent = computed(() => ((props.done / props.total) * 100).toFixed(2) + '%')
 
-    return () => <div class="todo-progress" style={{ display: 'flex', margin: '0 4px', fontFamily: '"Helvetica Neue"' }} title={percent.value}>
+    return () => <div class="todo-progress" style={{ display: 'flex', margin: '0 4px', fontVariantNumeric: 'tabular-nums' }} title={percent.value}>
       <svg key="123" width="16" height="16" style={{ marginRight: '5px', transform: 'rotate(-90deg)' }}>
         <circle stroke="var(--g-color-70)" stroke-width="3" fill="transparent" cx="50%" cy="50%" r="6"></circle>
         <circle style="transition: stroke-dashoffset 0.35s; transform: rotate(7.105263157894736deg); transform-origin: center"
@@ -265,6 +266,12 @@ onBeforeUnmount(() => {
   FileTabs.removeActionBtnTapper(tabsActionBtnTapper)
 })
 
+watch([container, height], () => {
+  if (container.value) {
+    container.value.ownerDocument.documentElement.style.setProperty(CSS_VAR_NAME.PREVIEWER_HEIGHT, height.value + 'px')
+  }
+})
+
 async function scrollToTop () {
   disableSyncScrollAwhile(() => {
     scrollTopTo(0)
@@ -274,11 +281,14 @@ async function scrollToTop () {
 </script>
 
 <style lang="scss" scoped>
+$outline-width: 28em;
+
 .default-previewer {
   position: relative;
   height: 100%;
   width: 100%;
   transform: translateZ(0);
+  user-select: none;
 }
 
 .outline {
@@ -351,7 +361,7 @@ async function scrollToTop () {
 
   &.pined, &:hover {
     max-height: 75vh;
-    max-width: 28em;
+    max-width: $outline-width;
     box-shadow: rgba(0, 0, 0, 0.3) 2px 2px 10px;
 
     .outline-pin {
@@ -414,5 +424,42 @@ async function scrollToTop () {
   width: 100%;
   height: 6px;
   box-shadow: rgba(var(--g-color-80-rgb), 0.8) 0 6px 6px -6px inset;
+}
+
+.default-previewer.presentation {
+  display: flex;
+
+  .outline {
+    &.pined {
+      right: unset;
+      left: 1em;
+      flex: none;
+      position: unset;
+      margin-top: 0;
+      border-radius: 0;
+      box-shadow: none;
+      max-height: 100%;
+      background: var(--g-color-100);
+      border-right: 1px solid var(--g-color-86);
+
+      .catalog {
+        max-height: calc(100% - 35px) !important;
+      }
+
+      .outline-title {
+        border-bottom: 1px solid var(--g-color-86);
+
+        .outline-pin:not(:hover) {
+          background: var(--g-color-88);
+          color: var(--g-color-40);
+        }
+      }
+    }
+  }
+
+  iframe {
+    flex: 1;
+    position: static !important;
+  }
 }
 </style>

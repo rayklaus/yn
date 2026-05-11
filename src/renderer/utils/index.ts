@@ -1,84 +1,11 @@
 import CryptoJS from 'crypto-js'
 import { useToast } from '@fe/support/ui/toast'
 import { t } from '@fe/services/i18n'
-import { FLAG_DEBUG } from '@fe/support/args'
 
-export * as path from './path'
 export * as storage from './storage'
 export * as crypto from './crypto'
 export * as composable from './composable'
-
-/**
- * quote string
- * @param str
- * @param quote
- */
-export function quote (str: string, quote = '`') {
-  return quote + str.replaceAll('\\', '\\\\').replaceAll(quote, '\\' + quote) + quote
-}
-
-export function encodeMarkdownLink (path: string) {
-  return path
-    .replace(/\(/g, '%28')
-    .replace(/\)/g, '%29')
-    .replace(/ /g, '%20')
-}
-
-export function removeQuery (url: string) {
-  return url.replace(/[#?].*$/, '')
-}
-
-export function dataURLtoBlob (dataURL: string) {
-  const byteString = atob(dataURL.split(',')[1])
-  const mimeString = dataURL.split(',')[0].split(':')[1].split(';')[0]
-  const ab = new ArrayBuffer(byteString.length)
-  const ia = new Uint8Array(ab)
-
-  for (let i = 0; i < byteString.length; i++) {
-    ia[i] = byteString.charCodeAt(i)
-  }
-
-  return new Blob([ab], { type: mimeString })
-}
-
-export function fileToBase64URL (file: File | Blob) {
-  return new Promise<string>((resolve, reject) => {
-    const fr = new FileReader()
-    fr.readAsDataURL(file)
-    fr.onload = () => resolve(fr.result as string)
-    fr.onerror = error => reject(error)
-  })
-}
-
-export function getLogger (subject: string) {
-  const logger = (level: string) => (...args: any) => {
-    const time = `${new Date().toLocaleString()}.${Date.now() % 1000}`
-    ;(console as any)[level](`[${time}] [${level}] ${subject} >`, ...args)
-  }
-
-  return {
-    debug: FLAG_DEBUG ? logger('debug') : () => 0,
-    log: logger('log'),
-    info: logger('info'),
-    warn: logger('warn'),
-    error: logger('error')
-  }
-}
-
-export function sleep (ms: number) {
-  return new Promise(resolve => {
-    setTimeout(resolve, ms)
-  })
-}
-
-export function objectInsertAfterKey (obj: {}, key: string, content: {}) {
-  const items = Object.entries(obj)
-  const idx = items.findIndex(([k]) => k === key)
-  if (idx > -1) {
-    items.splice(idx + 1, 0, ...Object.entries(content))
-  }
-  return Object.fromEntries(items)
-}
+export * from './pure'
 
 export function downloadContent (filename: string, content: Blob): void
 export function downloadContent (filename: string, content: ArrayBuffer | Buffer | string, type: string): void
@@ -141,4 +68,102 @@ export function copyText (text?: string) {
   document.execCommand('copy')
   document.body.removeChild(textarea)
   toast.show('info', t('copied'))
+}
+
+/**
+ * create a text highlighter
+ * @param container
+ * @param highlightName
+ * @param css
+ * @returns
+ */
+export function createTextHighlighter (
+  container: HTMLElement | undefined | null | (() => HTMLElement | undefined | null),
+  highlightName: string,
+  css: string | undefined | null | ((colorScheme: 'light' | 'dark') => string) = color => `color: ${color === 'dark' ? '#ffec99' : '#bd7f02'}`
+) {
+  let style: HTMLStyleElement | null = null
+
+  if (css) {
+    // remove existing styles
+    const existingStyle = document.querySelectorAll(`style[data-highlight-name="${highlightName}"]`)
+    existingStyle.forEach(style => style.remove())
+
+    style = document.createElement('style')
+    style.dataset.highlightName = highlightName
+    style.textContent = `
+      @media screen {
+        html ::highlight(${highlightName}) {
+          ${typeof css === 'function' ? css('light') : css}
+        }
+
+        html[app-theme=dark] ::highlight(${highlightName}) {
+          ${typeof css === 'function' ? css('dark') : css}
+        }
+      }
+      @media (prefers-color-scheme: dark) {
+        html[app-theme=system] ::highlight(${highlightName}) {
+          ${typeof css === 'function' ? css('dark') : css}
+        }
+      }
+    `
+
+    document.head.appendChild(style)
+  }
+
+  const remove = () => {
+    CSS.highlights.delete(highlightName)
+  }
+
+  const dispose = () => {
+    remove()
+    style?.remove()
+  }
+
+  const highlight = (keyword: string | RegExp) => {
+    remove()
+
+    keyword = typeof keyword === 'string' ? keyword.trim() : keyword
+
+    if (!keyword) {
+      return
+    }
+
+    const ranges: Range[] = []
+    const containerElement = typeof container === 'function' ? container() : container
+
+    if (!containerElement) {
+      return
+    }
+
+    const treeWalker = document.createTreeWalker(containerElement, NodeFilter.SHOW_TEXT)
+
+    let node: Node | null = null
+
+    do {
+      node = treeWalker.nextNode()
+      if (node && node.nodeType === Node.TEXT_NODE) {
+        const textContent = (node as Text).textContent || ''
+        const regex = typeof keyword === 'string' ? new RegExp(`(${keyword})`, 'gi') : keyword
+        let match: RegExpExecArray | null
+
+        while ((match = regex.exec(textContent)) !== null) {
+          const range = document.createRange()
+          range.setStart(node, match.index)
+          range.setEnd(node, match.index + match[0].length)
+          ranges.push(range)
+        }
+      }
+    } while (node)
+
+    CSS.highlights.set(highlightName, new Highlight(...ranges))
+
+    return remove
+  }
+
+  return {
+    dispose,
+    remove,
+    highlight,
+  }
 }

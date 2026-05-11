@@ -13,12 +13,13 @@ for rendering output.
 */
 
 import katex from 'katex'
+import 'katex/contrib/mhchem/mhchem.js'
 import { h } from 'vue'
 import type { Plugin } from '@fe/context'
 import type Token from 'markdown-it/lib/token'
-import styles from 'katex/dist/katex.min.css'
+import styles from 'katex/dist/katex.min.css?inline'
 import monacoLatex from '@fe/others/monaco-latex'
-import { getRenderCache } from '@fe/services/markdown'
+import { getRenderCache } from '@fe/services/renderer'
 import { triggerHook } from '@fe/core/hook'
 
 // Test if potential opening or closing delimieter
@@ -43,8 +44,8 @@ function isValidDelim (state: any, pos: number) {
   }
 
   return {
-    can_open: can_open,
-    can_close: can_close
+    can_open,
+    can_close
   }
 }
 
@@ -231,8 +232,9 @@ function math_plugin (md: any) {
 export default {
   name: 'markdown-katex',
   register: ctx => {
-    ctx.view.addStyles(styles)
     ctx.view.addStyles(`
+      ${styles}
+
       .markdown-view .markdown-body .katex {
         background: initial;
       }
@@ -248,9 +250,9 @@ export default {
       /* eslint-disable no-template-curly-in-string */
 
       items.push(
-        { label: '/ \\begin KaTeX Environment', insertText: '\\begin{$1}\n\\end{$1}' },
-        { label: '/ $ Inline KaTeX', insertText: '$$1$' },
-        { label: '/ $$ Block KaTeX', insertText: '$$$1$$\n' },
+        { language: 'latex', label: '/ \\begin KaTeX Environment', insertText: '\\begin{$1}\n$2\n\\end{$1}', block: true },
+        { language: 'markdown', label: '/ $ Inline KaTeX', insertText: '$$1$' },
+        { language: 'markdown', label: '/ $$ Block KaTeX', insertText: '$$$1$$\n', block: true },
       )
     })
 

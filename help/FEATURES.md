@@ -15,6 +15,12 @@ English | [中文](./FEATURES_ZH-CN.md)
 
 ## Data Storage
 
+`<home>` is the directory of the current user. Example:
+
+1. Windows: `C:\Users\<username>`
+1. Linux: `/home/<username>`
+1. Mac: `/Users/<username>`
+
 The application generated data is stored in `<home>/yank-note` dir, click the "Open Main Dir" menu in the tray to view them.
 
 Directory description
@@ -22,15 +28,16 @@ Directory description
 1. configuration file `<home>/yank-note/config.json`
 1. export docx reference doc `<home>/yank-note/pandoc-reference.docx`
 1. document versions `<home>/yank-note/histories`
-    ::: tip
-    If you accidentally lost your document content, you can check this folder and try to recovery it.
-    :::
-    ::: danger
-    For performance reasons, documents with more than *102400* characters will not store history. Therefore, please be careful when embedding Base64 images in documents.
-    :::
+    > [!TIP]
+    > If you accidentally lost your document content, you can check this folder and try to recovery it.
+
+    > [!CAUTION]
+    > For performance reasons, documents with more than *102400* characters will not store history. Therefore, please be careful when embedding Base64 images in documents.
+
 1. plug-ins `<home>/yank-note/plugins`
 1. themes `<home>/yank-note/themes`
 1. extensions `<home>/yank-note/extensions`
+1. other user data `<home>/yank-note/data`
 
 ## TOC Generation
 
@@ -62,6 +69,27 @@ Type '/' in the editor to get prompts
     *[HTML]: Hyper Text Markup Language
     *[W3C]:  World Wide Web Consortium
     The HTML specification is maintained by the W3C.
++ Wiki Link: Supports using `[[filename#anchor|display text]]` or `[[filename:line,column|display text]]` syntax to link documents, such as [[README#Highlights|Features]] [[README:3,4]]
++ Tags: #Markdown #Help
+
+## Github Alerts
+
+This feature is implemented using [markdown-it-github-alerts](https://github.com/antfu/markdown-it-github-alerts), providing support for [GitHub-style alert prompts](https://github.com/orgs/community/discussions/16925).
+
+> [!NOTE] Note
+> Highlights information that users should take into account, even when skimming.
+
+> [!TIP]
+> Optional information to help a user be more successful.
+
+> [!IMPORTANT]
+> Crucial information necessary for users to succeed.
+
+> [!WARNING]
+> Critical content demanding immediate user attention due to potential risks.
+
+> [!CAUTION]
+> Negative potential consequences of an action.
 
 ### Element Attribute
 
@@ -180,13 +208,12 @@ journey
 
 ## PlantUML
 
-You can configure the use of local endpoint or PlantUML online endpoint to generate graph in Settings.
+You can *<a href="javascript: ctx.setting.showSettingPanel('plantuml-api')">configure</a>* the use of local endpoint or PlantUML online endpoint to generate graph in Settings.
 
-::: warning
-If you are use local endpoint, the system needs to have a Java environment with Graphviz installed.
+> [!IMPORTANT]
+> If you are use local endpoint, the system needs to have a Java environment with Graphviz installed.
 If it prompts an error `Cannot find Graphviz`,
 Please refer to [Test your GraphViz installation](https://plantuml.com/graphviz-dot)
-:::
 
 The example is as follows
 
@@ -199,7 +226,15 @@ a -> b
 This feature is implemented using [markdown-it-multimd-table](https://github.com/RedBug312/markdown-it-multimd-table).
 Support the use of multiple lines of text and lists in tables. Support table description rendering.
 
-You can double click / right click table cell to quickly edit table cell content.
+You can double-click or right-click on a cell to quickly edit its content. Here are the related shortcuts:
+
+- `DBLClick`: Edit cell
+- `Escape`: Exit editing
+- `Enter`: Confirm editing and move to the next row
+- `Shift + Enter`: Confirm editing and move to the previous row
+- `Cmd/Ctrl + Shift + Enter`: Confirm editing and insert a new row below
+- `Tab`: Confirm editing and move to the next column
+- `Shift + Tab`: Confirm editing and move to the previous column
 
 First header | Second header
 -------------|---------------
@@ -226,7 +261,7 @@ Test | Test
 | x4 {colspan=2} |
 [Merge Cells]
 
-## Katex
+## LaTeX
 
 This feature is provided by [KaTeX](https://github.com/KaTeX/KaTeX).
 
@@ -251,11 +286,29 @@ Support to run `JavaScript` `PHP` `nodejs` `Python` `bash` `bat` code.
 This function is implemented by executing external commands, so the corresponding environment needs to be installed.
 
 The first line of the code block needs to contain the string `--run--`, an example is as follows
+
+The JS code runs in a Web Worker by default. If you need to run it in the main thread, you can add the `--no-worker--` parameter after the code block.
+
 ```js
 // --run--
 await new Promise(r => setTimeout(r, 500))
+console.log('HELLOWORLD')
+```
+
+The code running in the main thread supports accessing the editor API using the `ctx` object, as shown in the following example.
+
+```js
+// --run-- --no-worker--
+await new Promise(r => setTimeout(r, 500))
 ctx.ui.useToast().show("info", "HELLOWORLD!")
 console.log('HELLOWORLD')
+```
+
+If HTML output is required, the `--output-html--` parameter can be added after the code block.
+
+```js
+// --run-- --output-html--
+console.log(`output <i>HTML</i>`)
 ```
 
 ```node
@@ -361,14 +414,16 @@ If there is no title, there will be no outer border decoration
 <button onclick="ctx.ui.useToast().show(`info`, `HELLOWORLD!`)">HELLO</button>
 ```
 
+You can also *<a href="javascript: ctx.showExtensionManager('@yank-note/extension-repl')">install and activate the Vue Repl extension</a>* to write applet using Vue SFC.
+
 ## ECharts
 
 The string containing `--echarts--` in the first line of the Js code block will be resolved into ECharts graphics, the example is as follows
 
 ```js
 // --echarts--
-function (chart) {
-chart.setOption({
+
+const option = {
     // backgroundColor: '#2c343c',
 
     title: {
@@ -439,8 +494,9 @@ chart.setOption({
             }
         }
     ]
-}, true)
 }
+
+chart.setOption(option, true)
 ```
 
 ## Draw.io
@@ -448,16 +504,6 @@ chart.setOption({
 The value of the link attribute `link-type` needs to be a `drawio` string. The use of the link format will not affect other Markdown resolver resolving.
 
 [drawio](./test.drawio){link-type="drawio"}
-
-## Luckysheet Table
-
-The value of the link attribute `link-type` needs to be a `luckysheet` string. The use of the link format will not affect other Markdown resolver resolving.
-
-::: warning
-[Luckysheet](https://github.com/mengshukeji/Luckysheet) has many bugs and should be used with caution.
-:::
-
-[luckysheet](./test.luckysheet){link-type="luckysheet"}
 
 ## Container Block
 
@@ -473,7 +519,7 @@ Support functions similiar to [VuePress Container Block](https://v2.vuepress.vue
 
 `type` is required, `title` and `content` are optional.
 
-The supported `types` are: `tip` `warning` `danger` `details` `group` `group-item`
+The supported `types` are: tip, warning, danger, details, code-group, group, group-item, row, col, section, div
 
 **Example**
 
@@ -516,6 +562,17 @@ test 3
 :::
 ::::
 
+::: code-group
+```js [test.js]
+let a = 1
+```
+
+```ts [test.ts]
+let a: number = 1
+```
+:::
+
+
 ::::: row Columns
 :::: col TODO
 ::: warning
@@ -550,15 +607,12 @@ test 3
 :::
 ::::
 
-## OpenAI Auto Completion
+## AI Copilot
 
-Yank Note integrates with [OpenAI](https://openai.com), press `[= $ctx.command.getKeysLabel('plugin.editor-openai.trigger') =]` to trigger intelligent completion (If text is selected, only the selected text is submitted to AI for calculation).
+Yank Note integrates with artificial intelligence platforms such as [OpenAI](https://openai.com) and [Google AI](https://ai.google.dev/), enabling features like intelligent autocompletion and text rewriting.
 
-Note: OpenAI API token needs to be obtained by yourself.
-
-> *<a href="javascript: ctx.showExtensionManager('@yank-note/extension-openai')">Requires OpenAI extension installed and enabled</a>*
-
-<video src="./openai.mp4" height="200" controls></video>
+> [!NOTE]
+> You need to obtain the relevant API tokens yourself. *<a href="javascript: ctx.showExtensionManager('@yank-note/extension-openai')">Requires AI Copilot extension installed and enabled</a>*.
 
 ## Front Matter
 
@@ -571,6 +625,7 @@ variable name | type | description
 `headingNumber` | `boolean` | whether to enable the page title serial number
 `wrapCode` | `boolean` | whether to enable code wrapping
 `enableMacro` | `boolean` | whether to enable macro replacement
+`tags` | `string[]` | 文档标签
 `define` | `Record<string, string>` | Macro definition, string replacing
 `defaultPreviewer` | `string` | The default previewer for the document, some extensions may provide a special preview interface. Such as *<a href="javascript: ctx.showExtensionManager('@yank-note/extension-reveal-js')">Reveal.js extension</a>*
 `mdOptions` | `Record<string, boolean>` | Markdown-it parse options
@@ -581,22 +636,23 @@ variable name | type | description
 `katex` | `Record<string, any>` | [Katex Options](https://katex.org/docs/options.html)
 
 ## Macro Replacement
-
-> *<a href="javascript: ctx.showPremium()">available in premium version</a>*
+> [!NOTE]
+> *<a href="javascript: ctx.showPremium()">Available in premium version</a>*
 
 Yank Note allows you to embed macros in the page to dynamically replace the document.
 
-::: tip
-Before using, you need to enable macro replacement in Front Matter and define `enableMacro: true`.
-:::
+> [!IMPORTANT]
+> Before using, you need to enable macro replacement in Front Matter and define `enableMacro: true`.
 
-::: warning
-Using macro replacement may lead to inaccurate correspondence between source code and preview line numbers. Yank Note has dealt with it as much as possible, but some cases may still cause synchronous scrolling exceptions.
-:::
+> [!WARNING]
+> Using macro replacement may lead to inaccurate correspondence between source code and preview line numbers. Yank Note has dealt with it as much as possible, but some cases may still cause synchronous scrolling exceptions.
 
 ### Definition
 
 The `define` field can define some text replacement mappings. Supports definition in another file, supports macro expressions. For details, please refer to the Front Matter at the top of this document.
+
+> [!TIP]
+> You can define global macros in the <a href="javascript: ctx.setting.showSettingPanel('macros')">settings</a>. But you still need to define `enableMacro: true` in Front Matter.
 
 - App Name: --APP_NAME--
 - App Version: --APP_VERSION--
@@ -624,6 +680,7 @@ If the expression needs to contain [\= or =\], please enter `[\=` or `=\]` to es
 - application version: [= $ctx.version =]
 - current document name: [= $doc.basename =]
 - current time:  [= $ctx.lib.dayjs().format('YYYY-MM-DD HH:mm') =]
+- sequence: [= $seq`Figure-` =] | [= $seq`Figure-` =] | [= $seq`Figure-` =] | [= $seq`Table-` =] | [= $seq`Table-` =]
 - qualifier escape:  [= '[\= =\]' =]
 - Arithmetic:  [= (1 + 2) / 2 =]
 - reference file (support 3 levels of nesting, you can use Front Matter variable defined in the target document):
@@ -663,6 +720,7 @@ variable name | type | description
 `$afterMacro` | `(fn: (src: string) => string) => Result` | Define a macro-replaced callback function that can be used for further processing of the replaced text.
 `$noop` | `() => Result` | no operation, Used for holding text space
 `$doc` | `object` | Current document information
+`$seq` | `(label: string) => Result` | Sequence
 `$doc.basename` | `string` | File name of current document (no suffix)
 `$doc.name` | `string` | File name of current document
 `$doc.path` | `string` | Current document path
@@ -689,6 +747,12 @@ name               | use         | default value |  description                 
 1. Right click the tray icon and click "Open Main Dir", go to the `themes` folder.
 2. Copy `github.css` to a new CSS file ans modify it.
 3. Open Setting => Appearance => Custom CSS switch CSS file.
+
+## CLI and MCP
+
+Yank Note supports CLI (Command Line Interface) and MCP (Model Context Protocol) to allow you to interact with the application programmatically.
+
+For more details, please refer to [CLI and MCP](https://help.yank-note.com/cli-mcp.html).
 
 ## Plug-In Development
 

@@ -1,6 +1,6 @@
 import * as path from 'path'
 import * as fs from 'fs-extra'
-import request from 'request'
+import { request } from 'undici'
 import { unzip } from 'zlib'
 import tar from 'tar-stream'
 import { USER_EXTENSION_DIR } from './constant'
@@ -12,7 +12,7 @@ const RE_EXTENSION_ID = /^[@$a-z0-9-_]+$/
 
 const configKey = 'extensions'
 
-let installRequest: request.Request | null = null
+let abortcontroller: AbortController | null = null
 
 function getExtensionPath (id: string) {
   const dir = id.replace(/\//g, '$')
@@ -64,29 +64,26 @@ export async function list () {
 export async function install (id: string, url: string) {
   console.log('[extension] install', id, url)
 
-  if (installRequest) {
+  if (abortcontroller) {
     throw new Error('Another extension is being installed')
   }
 
   const extensionPath = getExtensionPath(id)
-  if (await fs.pathExists(extensionPath)) {
+  const tempExtensionPath = `${extensionPath}.tmp-${Date.now()}`
+  const backupExtensionPath = `${extensionPath}.backup-${Date.now()}`
+  const exists = await fs.pathExists(extensionPath)
+  if (exists) {
     console.log('[extension] already installed. upgrade:', id)
     await checkDirectory(extensionPath)
-
-    if (!(await fs.lstat(extensionPath)).isDirectory()) {
-      throw new Error('Extension path is not a directory')
-    }
   }
 
-  const agent = await getAction('get-proxy-agent')(url)
+  const dispatcher = await getAction('get-proxy-dispatcher')(url)
+  try {
+    abortcontroller = new AbortController()
+    const res = await request(url, { dispatcher, signal: abortcontroller.signal, maxRedirections: 3 })
+    const body = await res.body.arrayBuffer()
 
-  return new Promise((resolve, reject) => {
-    installRequest = request({ url, agent, encoding: null }, (err, _, body) => {
-      if (err) {
-        reject(err)
-        return
-      }
-
+    await new Promise((resolve, reject) => {
       unzip(body, (err, data) => {
         if (err) {
           reject(err)
@@ -96,7 +93,13 @@ export async function install (id: string, url: string) {
         const extract = tar.extract()
 
         extract.on('entry', (header, stream, next) => {
-          const filePath = path.join(extensionPath, header.name.replace(/^package/, ''))
+          if (header.name.includes('..')) {
+            console.log('[extension] invalid file name', header.name)
+            next()
+            return
+          }
+
+          const filePath = path.join(tempExtensionPath, header.name.replace(/^package/, ''))
           console.log('[extension] write', header.type, filePath)
 
           if (header.type === 'file') {
@@ -120,20 +123,33 @@ export async function install (id: string, url: string) {
       })
     })
 
-    installRequest.on('abort', () => {
-      reject(new Error('Install request aborted'))
-    })
-  }).finally(() => {
-    installRequest = null
-  })
+    if (exists) {
+      await fs.move(extensionPath, backupExtensionPath)
+    }
+
+    try {
+      await fs.move(tempExtensionPath, extensionPath, { overwrite: true })
+      await fs.remove(backupExtensionPath)
+    } catch (error) {
+      if (exists && await fs.pathExists(backupExtensionPath)) {
+        await fs.move(backupExtensionPath, extensionPath, { overwrite: true })
+      }
+      throw error
+    }
+  } catch (error) {
+    await fs.remove(tempExtensionPath)
+    throw error
+  } finally {
+    abortcontroller = null
+  }
 }
 
 export async function abortInstallation () {
   console.log('[extension] abort installation')
 
-  if (installRequest) {
-    installRequest.abort()
-    installRequest = null
+  if (abortcontroller) {
+    abortcontroller.abort()
+    abortcontroller = null
   }
 }
 

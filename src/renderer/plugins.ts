@@ -1,34 +1,43 @@
+import buildInRenderers from '@fe/plugins/build-in-renderers'
 import customStyles from '@fe/plugins/custom-styles'
+import customKeybindings from '@fe/plugins/custom-keybindings'
+import codeSyntaxHighlightFont from '@fe/plugins/code-syntax-highlight-font'
 import electronZoom from '@fe/plugins/electron-zoom'
-import documentHistoryStack from '@fe/plugins/document-history-stack'
-import fileTreeContextMenu from '@fe/plugins/file-tree-context-menu'
+import historyStack from '@fe/plugins/history-stack'
+import fileTreeFunctions from '@fe/plugins/file-tree-functions'
 import statusBarSetting from '@fe/plugins/status-bar-setting'
 import statusBarRepositorySwitch from '@fe/plugins/status-bar-repository-switch'
 import statusBarView from '@fe/plugins/status-bar-view'
 import statusBarNavigation from '@fe/plugins/status-bar-navigation'
 import statusBarInsert from '@fe/plugins/status-bar-insert'
 import statusBarTool from '@fe/plugins/status-bar-tool'
-import statusBarHelp from '@fe/plugins/status-bar-help'
 import statusBarDocumentInfo from '@fe/plugins/status-bar-document-info'
-import statusBarTheme from './plugins/status-bar-theme'
-import statusBarHistory from './plugins/status-bar-history'
+import statusBarHelp from '@fe/plugins/status-bar-help'
+import statusBarPremium from './plugins/status-bar-premium'
+import statusBarTheme from '@fe/plugins/status-bar-theme'
+import statusBarHistory from '@fe/plugins/status-bar-history'
 import statusBarPresentation from '@fe/plugins/status-bar-presentation'
 import controlCenter from '@fe/plugins/control-center'
 import statusBarTerminal from '@fe/plugins/status-bar-terminal'
-import statusBarExtension from './plugins/status-bar-extension'
+import statusBarExtension from '@fe/plugins/status-bar-extension'
 import statusBarGet from '@fe/plugins/status-bar-get'
 import editorPaste from '@fe/plugins/editor-paste'
 import editorAttachment from '@fe/plugins/editor-attachment'
 import editorMarkdown from '@fe/plugins/editor-markdown'
 import editorMdSyntax from '@fe/plugins/editor-md-syntax'
+import editorMdList from '@fe/plugins/editor-md-list'
 import editorWords from '@fe/plugins/editor-words'
 import editorPathCompletion from '@fe/plugins/editor-path-completion'
 import editorFolding from '@fe/plugins/editor-folding'
+import editorRestoreState from '@fe/plugins/editor-restore-state'
+import externalFileReadonly from '@fe/plugins/external-file-readonly'
 import copyText from '@fe/plugins/copy-text'
 import switchTodo from '@fe/plugins/switch-todo'
 import imageViewer from '@fe/plugins/image-viewer'
+import mediaPlayer from '@fe/plugins/media-player'
 import emoji from '@fe/plugins/emoji'
-import getStarted from './plugins/get-started'
+import getStarted from '@fe/plugins/get-started'
+import markdownWikiLinks from '@fe/plugins/markdown-wiki-links'
 import markdownHtml from '@fe/plugins/markdown-html'
 import markdownRenderVnode from '@fe/plugins/markdown-render-vnode'
 import markdownMacro from '@fe/plugins/markdown-macro'
@@ -37,9 +46,11 @@ import markdownImsize from '@fe/plugins/markdown-imsize'
 import markdownToc from '@fe/plugins/markdown-toc'
 import markdownCodeWrap from '@fe/plugins/markdown-code-wrap'
 import markdownCodeHighlight from '@fe/plugins/markdown-code-highlight'
+import floatingEditor from '@fe/plugins/floating-editor'
 import markdownLink from '@fe/plugins/markdown-link'
 import markdownTable from '@fe/plugins/markdown-table'
 import markdownTaskList from '@fe/plugins/markdown-task-list'
+import markdownListCollapsible from '@fe/plugins/markdown-list-collapsible'
 import markdownFootnote from '@fe/plugins/markdown-footnote'
 import markdownKatex from '@fe/plugins/markdown-katex'
 import markdownCodeCopy from '@fe/plugins/markdown-code-copy'
@@ -53,19 +64,36 @@ import markdownDrawio from '@fe/plugins/markdown-drawio'
 import markdownLuckysheet from '@fe/plugins/markdown-luckysheet'
 import markdownContainer from '@fe/plugins/markdown-container'
 import markdownHeadingNumber from '@fe/plugins/markdown-heading-number'
+import markdownGithubAlerts from '@fe/plugins/markdown-github-alerts'
+import markdownHashtags from '@fe/plugins/markdown-hashtags'
 import markdownMisc from '@fe/plugins/misc'
 import syncScroll from '@fe/plugins/sync-scroll'
 import imageLocalization from '@fe/plugins/image-localization'
+import viewImageContextMenus from '@fe/plugins/view-image-context-menus'
 import imageHostingPicgo from '@fe/plugins/image-hosting-picgo'
 import copyContent from '@fe/plugins/copy-content'
 import sharePreview from '@fe/plugins/share-preview'
 import codeRunners from '@fe/plugins/code-runners'
+import watchFileRefresh from '@fe/plugins/watch-file-refresh'
+import previewFont from '@fe/plugins/preview-font'
+import dropToOpenFile from '@fe/plugins/drop-to-open-file'
+import recordRecentDocument from '@fe/plugins/record-recent-document'
+import aiCopilot from '@fe/plugins/ai-copilot'
+import mcpServer from '@fe/plugins/mcp-server'
+import mcpExport from '@fe/plugins/mcp-export'
+import viewLinks from '@fe/plugins/view-links'
+import insertTable from '@fe/plugins/insert-table'
+import textComparator from '@fe/plugins/text-comparator'
+import textAutospace from '@fe/plugins/text-autospace'
 
 export default [
+  buildInRenderers,
   customStyles,
+  customKeybindings,
+  codeSyntaxHighlightFont,
   electronZoom,
-  documentHistoryStack,
-  fileTreeContextMenu,
+  historyStack,
+  fileTreeFunctions,
   statusBarSetting,
   statusBarRepositorySwitch,
   statusBarView,
@@ -74,6 +102,7 @@ export default [
   statusBarTool,
   statusBarDocumentInfo,
   statusBarHelp,
+  statusBarPremium,
   statusBarTheme,
   statusBarHistory,
   statusBarTerminal,
@@ -85,14 +114,19 @@ export default [
   editorAttachment,
   editorMarkdown,
   editorMdSyntax,
+  editorMdList,
   editorWords,
   editorPathCompletion,
   editorFolding,
+  editorRestoreState,
+  externalFileReadonly,
   copyText,
   switchTodo,
   imageViewer,
+  mediaPlayer,
   emoji,
   getStarted,
+  markdownWikiLinks,
   markdownHtml,
   markdownRenderVnode,
   markdownMacro,
@@ -101,9 +135,11 @@ export default [
   markdownToc,
   markdownCodeWrap,
   markdownCodeHighlight,
+  floatingEditor,
   markdownLink,
   markdownTable,
   markdownTaskList,
+  markdownListCollapsible,
   markdownFootnote,
   markdownKatex,
   markdownCodeCopy,
@@ -117,11 +153,25 @@ export default [
   markdownLuckysheet,
   markdownContainer,
   markdownHeadingNumber,
+  markdownGithubAlerts,
+  markdownHashtags,
   markdownMisc,
   syncScroll,
   imageLocalization,
+  viewImageContextMenus,
   imageHostingPicgo,
   copyContent,
   sharePreview,
   codeRunners,
+  watchFileRefresh,
+  previewFont,
+  dropToOpenFile,
+  recordRecentDocument,
+  aiCopilot,
+  mcpServer,
+  mcpExport,
+  viewLinks,
+  insertTable,
+  textComparator,
+  textAutospace,
 ]

@@ -1,6 +1,6 @@
 import type * as Monaco from 'monaco-editor'
-import MarkdownItEmoji from 'markdown-it-emoji'
-import emoji from 'markdown-it-emoji/lib/data/full.json'
+import MarkdownItEmoji from 'markdown-it-emoji/dist/full.cjs.js'
+import emoji from 'markdown-it-emoji/lib/data/full.mjs'
 import type { Ctx, Plugin } from '@fe/context'
 
 const triggerCharacter = ':'
@@ -17,9 +17,23 @@ class EmojiCompletionProvider implements Monaco.languages.CompletionItemProvider
   }
 
   public provideCompletionItems (model: Monaco.editor.IModel, position: Monaco.Position): Monaco.languages.CompletionList {
+    if (!this.ctx.setting.getSetting('editor.complete-emoji')) {
+      return { suggestions: [] }
+    }
+
     const line = model.getLineContent(position.lineNumber)
     const cursor = position.column - 1
     const linePrefixText = line.slice(0, cursor)
+
+    // check language id
+    if (this.ctx.editor.getLineLanguageId(position.lineNumber, model) !== 'markdown') {
+      return { suggestions: [] }
+    }
+
+    // Check if the cursor is in a wiki link
+    if (linePrefixText.lastIndexOf('[[') > linePrefixText.lastIndexOf(']]')) {
+      return { suggestions: [] }
+    }
 
     const match = linePrefixText.match(/:[a-zA-Z0-9]*$/)
     if (!match || linePrefixText.charAt(linePrefixText.length - match[0].length - 1) === ':') {
@@ -64,6 +78,33 @@ export default {
         'markdown',
         new EmojiCompletionProvider(monaco, ctx)
       )
+    })
+
+    ctx.setting.changeSchema(schema => {
+      schema.properties['render.md-emoji'] = {
+        defaultValue: true,
+        title: 'T_setting-panel.schema.render.md-emoji',
+        type: 'boolean',
+        format: 'checkbox',
+        group: 'render',
+        required: true,
+      }
+      schema.properties['editor.complete-emoji'] = {
+        defaultValue: true,
+        title: 'T_setting-panel.schema.editor.complete-emoji',
+        type: 'boolean',
+        format: 'checkbox',
+        group: 'editor',
+        required: true,
+      }
+    })
+
+    ctx.registerHook('MARKDOWN_BEFORE_RENDER', ({ md }) => {
+      if (ctx.setting.getSetting('render.md-emoji')) {
+        md.enable('emoji', true)
+      } else {
+        md.disable('emoji', true)
+      }
     })
   }
 } as Plugin

@@ -3,7 +3,7 @@
     <div class="wrapper">
       <div class="body">
         <div class="side" ref="refSide">
-          <group-tabs class="tabs" :tabs="listTypes" v-model="listType" />
+          <group-tabs class="x-tabs" size="small" :tabs="listTypes" v-model="listType" />
           <div v-if="extensions.length > 0" class="list">
             <div
               v-for="item in extensions"
@@ -26,7 +26,9 @@
                 </div>
                 <div class="description">{{ item.description }}</div>
                 <div class="bottom">
-                  <div v-if="item.origin === 'official'" class="author"><i>Yank Note</i></div>
+                  <div v-if="item.origin === 'official'" class="author">
+                    <i><svg-icon name="codicon-verified-filled" height="16px" style="margin-top: -2px;" />Yank Note</i>
+                  </div>
                   <div v-else class="author" >{{ item.author.name }}</div>
                   <div class="status-list">
                     <div v-if="!item.compatible.value" class="status">{{ $t('extension.incompatible') }}</div>
@@ -45,7 +47,8 @@
             </div>
           </div>
           <div v-else class="list">
-            <div class="placeholder">{{ $t(registryExtensions ? 'extension.no-extension' : 'loading') }}</div>
+            <div v-if="!registryExtensions" class="placeholder">{{ $t('loading') }}</div>
+            <div v-else-if="registryExtensions.length === 0 && installedExtensions?.length === 0" class="placeholder">{{ $t('extension.no-extension') }}</div>
           </div>
         </div>
         <div class="detail">
@@ -71,7 +74,10 @@
                   </div>
                   <div class="tag">
                     <span>{{ $t('extension.author') }}</span>
-                    <span v-if="currentExtension.origin === 'official'"><i>Yank Note</i></span>
+                    <span v-if="currentExtension.origin === 'official'">
+                      <svg-icon name="codicon-verified-filled" height="16px" style="margin-top: -4px;margin-bottom: -2px;" />
+                      <i>Yank Note</i>
+                    </span>
                     <span v-else>{{ currentExtension.author.name }}</span>
                   </div>
                   <div v-if="currentExtension.latestVersion" class="tag">
@@ -136,7 +142,12 @@
                   </template>
                   <template v-else>
                     <template v-if="!currentExtension.installed">
-                      <button class="small tr" :disabled="!currentExtension.compatible.value" @click="install(currentExtension)">{{ $t('extension.install') }}</button>
+                      <button
+                        class="small tr"
+                        :class="{ disabled: !currentExtension.compatible.value }"
+                        @click="installLatest(currentExtension)"
+                        @contextmenu.prevent.stop="showInstallVersionMenu($event, currentExtension)"
+                      >{{ $t('extension.install') }}</button>
                     </template>
                     <template v-else>
                       <button class="small tr" @click="uninstall(currentExtension)">{{ $t('extension.uninstall') }}</button>
@@ -151,29 +162,25 @@
               </div>
             </div>
             <div class="content-wrapper">
-              <group-tabs class="tabs" :tabs="contentTypes" v-model="contentType" />
-              <template v-if="useNpmjsReadmePage">
-                <div v-show="iframeLoaded" class="content">
-                  <iframe
-                    @load="iframeOnload"
-                    sandbox="allow-scripts allow-popups allow-same-origin"
-                    referrerpolicy="no-referrer"
-                    :src="`/api/proxy?url=https://www.npmjs.com/package/${currentExtension.id}`"
-                  />
+              <group-tabs class="x-tabs" size="small" :tabs="contentTypes" v-model="contentType" />
+              <template v-if="showHomePageLink">
+                <div class="content" style="text-align: center; padding-top: 10em">
+                  <a :href="`https://www.npmjs.com/package/${currentExtension.id}`" target="_blank" rel="noopener noreferrer">
+                    {{ `https://www.npmjs.com/package/${currentExtension.id}` }}
+                  </a>
                 </div>
                 <div v-if="!iframeLoaded" class="placeholder">{{ $t('loading') }}</div>
               </template>
               <template v-else>
-                <div class="content">
+                <div v-if="contentMap[contentType][currentExtension.id]" class="content">
                   <iframe
-                    v-if="contentMap[contentType][currentExtension.id]"
                     @load="iframeOnload"
                     sandbox="allow-scripts allow-popups allow-same-origin"
                     referrerpolicy="no-referrer"
                     :srcdoc="contentMap[contentType][currentExtension.id] || ''"
                   />
                 </div>
-                <div v-if="!iframeLoaded" class="placeholder">{{ $t('loading') }}</div>
+                <div v-else class="placeholder">{{ $t('loading') }}</div>
               </template>
             </div>
           </template>
@@ -217,16 +224,19 @@ import { getCurrentLanguage, useI18n } from '@fe/services/i18n'
 import { getLogger, sleep } from '@fe/utils'
 import * as api from '@fe/support/api'
 import { registerAction, removeAction } from '@fe/core/action'
-import XMask from '@fe/components/Mask.vue'
-import GroupTabs from '@fe/components/GroupTabs.vue'
 import * as extensionManager from '@fe/others/extension'
 import type { Extension, ExtensionCompatible } from '@fe/types'
 import { reloadMainWindow } from '@fe/services/base'
 import * as setting from '@fe/services/setting'
 import { useModal } from '@fe/support/ui/modal'
 import { useToast } from '@fe/support/ui/toast'
+import { useContextMenu } from '@fe/support/ui/context-menu'
 import { getPurchased, showPremium } from '@fe/others/premium'
 import { FLAG_DISABLE_XTERM, FLAG_MAS, URL_MAS_LIMITATION } from '@fe/support/args'
+
+import XMask from '@fe/components/Mask.vue'
+import GroupTabs from '@fe/components/GroupTabs.vue'
+import SvgIcon from '@fe/components/SvgIcon.vue'
 
 const markdownIt = Markdown({ linkify: true, breaks: true, html: false })
 
@@ -245,6 +255,7 @@ const uninstalling = ref(false)
 const dirty = ref(false)
 const registryExtensions = ref<Extension[] | null>(null)
 const installedExtensions = ref<Extension[] | null>(null)
+const registryVersionMap = ref<Record<string, Extension[]>>({})
 const listType = ref<'all' | 'installed'>('all')
 const contentType = ref<'readme' | 'changelog'>('readme')
 const autoUpgrade = ref<boolean>()
@@ -332,7 +343,7 @@ const reloadRequired = computed(() => {
   return dirty.value || extensions.value.some(item => item.dirty)
 })
 
-const useNpmjsReadmePage = computed(() => {
+const showHomePageLink = computed(() => {
   return !!(currentExtension.value &&
     currentExtension.value.dist.unpackedSize &&
     contentType.value === 'readme' &&
@@ -388,7 +399,7 @@ async function fetchContent (type: 'readme' | 'changelog', extension: Extension)
 
   try {
     const url = type === 'readme' ? extension.readmeUrl : extension.changelogUrl
-    const xfetch = /https?:\/\//.test(url) ? api.proxyRequest : window.fetch
+    const xfetch = /https?:\/\//.test(url) ? api.proxyFetch : window.fetch
     const markdown = await xfetch(url).then(r => {
       if (r.ok === false) {
         logger.warn('fetchContent', r.statusText)
@@ -399,6 +410,7 @@ async function fetchContent (type: 'readme' | 'changelog', extension: Extension)
     })
 
     contentMap.value[type][extension.id] = `
+      <base target="_blank" />
       <link rel="stylesheet" href="${location.origin}/github.css">
       <div style="padding: 12px" class="markdown-body">
         ${markdownIt.render(markdown.replaceAll(/<small>([^<]+)<\/small>/g, '**$1**'))}
@@ -466,6 +478,57 @@ async function install (extension?: Extension, auto?: boolean) {
   }
 
   !auto && useToast().show('info', $t.value('extension.toast-loaded'))
+}
+
+async function installLatest (extension?: Extension) {
+  if (!extension?.compatible.value) {
+    return
+  }
+
+  await install(extension)
+}
+
+async function getInstallVersions (extension: Extension) {
+  const key = `${currentRegistry.value}:${extension.id}`
+  if (!registryVersionMap.value[key]) {
+    registryVersionMap.value[key] = await extensionManager.getRegistryExtensionVersions(extension.id, currentRegistry.value)
+  }
+
+  return registryVersionMap.value[key]
+}
+
+async function showInstallVersionMenu (e: MouseEvent, extension?: Extension) {
+  if (!extension) {
+    return
+  }
+
+  try {
+    const versions = await getInstallVersions(extension)
+
+    if (!versions.length) {
+      useToast().show('warning', 'No historical version')
+      return
+    }
+
+    useContextMenu().show(versions.map(item => ({
+      id: `${item.id}@${item.version}`,
+      label: item.compatible.value ? item.version : `${item.version} (incompatible)`,
+      onClick: () => {
+        if (!item.compatible.value) {
+          useToast().show('warning', item.compatible.reason)
+          return
+        }
+
+        install(item)
+      },
+    })), {
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+    })
+  } catch (error: any) {
+    logger.error('showInstallVersionMenu', error)
+    useToast().show('warning', error.message || 'Fetch versions failed')
+  }
 }
 
 async function abortInstallation () {
@@ -664,7 +727,14 @@ watch(autoUpgrade, debounce((val) => {
 
 onMounted(() => {
   autoUpgrade.value = setting.getSetting('extension.auto-upgrade', true)
-  registerAction({ name: 'extension.show-manager', handler: show })
+  registerAction({
+    name: 'extension.show-manager',
+    description: t('command-desc.extension_show-manager'),
+    handler: show,
+    forUser: true,
+    forMcp: true,
+    mcpDescription: 'Show extension manager. No args. No return.',
+  })
 })
 
 onUnmounted(() => {
@@ -692,8 +762,7 @@ onUnmounted(() => {
 
 .body {
   display: flex;
-  height: calc(100vh - 7vh - 50px);
-  max-height: 900px;
+  height: calc(100vh - 7vh - 100px);
 }
 
 .side {
@@ -711,12 +780,12 @@ onUnmounted(() => {
   width: 100%;
   box-sizing: border-box;
   font-size: 16px;
-  background-color: rgba(var(--g-color-0-rgb), 0.06);
+  padding-right: 5px;
 
   .item {
     cursor: pointer;
     position: relative;
-    border-bottom: 1px var(--g-color-70) solid;
+    border-bottom: 1px var(--g-color-82) solid;
     color: var(--g-color-20);
     display: flex;
     height: 77px;
@@ -794,16 +863,8 @@ onUnmounted(() => {
   }
 }
 
-.tabs {
-  display: inline-flex;
+.wrapper .body .x-tabs {
   margin-bottom: 8px;
-  z-index: 1;
-  flex: none;
-
-  ::v-deep(.tab) {
-    line-height: 1.5;
-    font-size: 14px;
-  }
 }
 
 .icon-extension {
@@ -845,7 +906,7 @@ onUnmounted(() => {
       padding: 12px;
 
       .title {
-        align-items: flex-end;
+        align-items: center;
         justify-content: start;
         overflow: hidden;
         margin-top: -6px;
@@ -903,6 +964,15 @@ onUnmounted(() => {
         button {
           margin-left: 0;
           margin-right: 6px;
+
+          &.disabled {
+            background-color: rgba(var(--g-color-40-rgb), 0.2);
+            cursor: not-allowed;
+
+            &:hover {
+              background-color: rgba(var(--g-color-40-rgb), 0.2);
+            }
+          }
         }
 
         i {

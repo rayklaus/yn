@@ -5,17 +5,15 @@
 
 <script lang="ts" setup>
 import { computed, onBeforeUnmount, onMounted } from 'vue'
-import { useStore } from 'vuex'
 import { registerHook, removeHook } from '@fe/core/hook'
 import { useQuickFilter } from '@fe/support/ui/quick-filter'
 import { getAllPreviewers, switchPreviewer } from '@fe/services/view'
 import { FileTabs } from '@fe/services/workbench'
 import { t } from '@fe/services/i18n'
-import type { AppState } from '@fe/support/store'
+import { HELP_REPO_NAME } from '@fe/support/args'
+import store from '@fe/support/store'
 import type { Components } from '@fe/types'
 import DefaultPreviewer from './DefaultPreviewer.vue'
-
-const store = useStore<AppState>()
 
 const previewer = computed(() => {
   const { previewer } = store.state
@@ -25,7 +23,7 @@ const previewer = computed(() => {
 function tabsActionBtnTapper (btns: Components.Tabs.ActionBtn[]) {
   const previewers = getAllPreviewers()
 
-  if (previewers.length < 1 || store.state.currentFile?.repo === '__help__') {
+  if (previewers.length < 1 || store.state.currentFile?.repo === HELP_REPO_NAME) {
     return
   }
 

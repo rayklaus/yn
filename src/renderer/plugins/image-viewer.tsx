@@ -15,7 +15,7 @@ function isImageFile (doc?: Doc | null) {
     return false
   }
 
-  if (doc.name.toLocaleLowerCase().endsWith('.svg')) {
+  if (doc.name.toLowerCase().endsWith('.svg')) {
     return true
   }
 
@@ -87,7 +87,7 @@ export default {
     ctx.registerHook('VIEW_MOUNTED', () => {
       setTimeout(() => {
         const viewer = new Viewer(ctx.view.getViewDom()!, {
-          zIndex: 299999,
+          zIndex: 2.11e8,
           container: document.body,
           transition: false,
           toolbar: {
@@ -114,6 +114,14 @@ export default {
           }
         }
 
+        const _initList = (viewer as any).initList
+        ;(viewer as any).initList = function (this: any, ...args: any[]) {
+          // hack for viewerjs, when there are too many images, the navbar will be hidden
+          this.options.navbar = this.images.length <= 5
+          this.navbar.style.display = this.options.navbar ? 'block' : 'none'
+          return _initList.apply(viewer, args)
+        }
+
         // eslint-disable-next-line @typescript-eslint/ban-ts-comment
         // @ts-ignore
         viewer.bind = wrapEventBind(viewer.bind)
@@ -129,7 +137,7 @@ export default {
 
     ctx.theme.addStyles(`
       body .viewer-backdrop {
-        background: rgba(239, 239, 239, 0.98);
+        background: rgba(var(--g-color-90-rgb), 0.98);
       }
 
       body .viewer-title {
@@ -150,7 +158,7 @@ export default {
       body.viewer-open {
         padding-right: 0 !important;
       }
-    `)
+    `, true)
 
     ctx.editor.registerCustomEditor({
       name: 'image-viewer',

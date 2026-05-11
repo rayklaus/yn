@@ -1,32 +1,44 @@
 import type * as Monaco from 'monaco-editor'
 import { cloneDeep, debounce } from 'lodash-es'
-import { FLAG_READONLY } from '@fe/support/args'
 import { isElectron, isMacOS } from '@fe/support/env'
 import { registerHook, triggerHook } from '@fe/core/hook'
 import { getActionHandler, registerAction } from '@fe/core/action'
 import * as ioc from '@fe/core/ioc'
-import { Alt } from '@fe/core/command'
+import { Alt } from '@fe/core/keybinding'
 import store from '@fe/support/store'
 import { useToast } from '@fe/support/ui/toast'
 import { sleep } from '@fe/utils'
 import { getColorScheme } from './theme'
 import { getSetting } from './setting'
+import { t } from './i18n'
 import { language as markdownLanguage } from 'monaco-editor/esm/vs/basic-languages/markdown/markdown.js'
-import { CustomEditor } from '@fe/types'
+import type { CustomEditor, CustomEditorCtx } from '@fe/types'
+import { FLAG_READONLY } from '@fe/support/args'
 
 export type SimpleCompletionItem = {
   label: string,
   kind?: Monaco.languages.CompletionItemKind,
+  language?: string,
   insertText: string,
+  detail?: string,
+  block?: boolean, // block completion
+  surroundSelection?: `$${number}` | `\${${number}${string}` | ((snippet: string, selection: Monaco.Selection, model: Monaco.editor.ITextModel) => string | undefined),
+  command?: {
+    id: string;
+    title: string;
+    tooltip?: string;
+    arguments?: any[];
+  }
 }
 
 export type SimpleCompletionItemTappers = (items: SimpleCompletionItem[]) => void
 
-let isDefaultEditor = true
+let currentEditor: CustomEditor | null | undefined
 let monaco: typeof Monaco
 let editor: Monaco.editor.IStandaloneCodeEditor
 
-const DEFAULT_MAC_FONT_FAMILY = 'MacEmoji, Menlo, Monaco, \'Courier New\', monospace'
+export const DEFAULT_MAC_FONT_FAMILY = 'MacEmoji, Menlo, Monaco, \'Courier New\', monospace'
+export const DEFAULT_MARKDOWN_EDITOR_NAME = 'default-markdown-editor'
 
 const refreshMarkdownMonarchLanguageDebounce = debounce(() => {
   whenEditorReady().then(({ monaco }) => {
@@ -55,21 +67,20 @@ function getFontFamily () {
  */
 export const getDefaultOptions = (): Monaco.editor.IStandaloneEditorConstructionOptions => ({
   value: '',
+  accessibilitySupport: 'off', // prevent ime input flash
   theme: getColorScheme() === 'dark' ? 'vs-dark' : 'vs',
   fontSize: getSetting('editor.font-size', 16),
   wordWrap: store.state.wordWrap,
   links: !isElectron,
   // wordWrapColumn: 40,
   mouseWheelZoom: getSetting('editor.mouse-wheel-zoom', true),
-  // try "same", "indent" or "none"
-  wrappingIndent: 'same',
+  wrappingIndent: getSetting('editor.wrap-indent', 'same'),
   smoothScrolling: true,
   cursorBlinking: 'smooth',
   scrollbar: getSetting('editor.minimap', true) ? {
     vertical: 'hidden',
     verticalScrollbarSize: 0
   } : undefined,
-  readOnly: FLAG_READONLY,
   acceptSuggestionOnEnter: 'smart',
   unicodeHighlight: {
     ambiguousCharacters: false,
@@ -83,6 +94,16 @@ export const getDefaultOptions = (): Monaco.editor.IStandaloneEditorConstruction
     enabled: false
   },
   lineNumbers: getSetting('editor.line-numbers', 'on'),
+  quickSuggestions: getSetting('editor.quick-suggestions', false),
+  suggestOnTriggerCharacters: getSetting('editor.suggest-on-trigger-characters', true),
+  occurrencesHighlight: 'off',
+  renderLineHighlight: 'all',
+  stickyScroll: { enabled: getSetting('editor.sticky-scroll-enabled', true) },
+  lightbulb: { enabled: 'on' as any },
+  fontLigatures: getSetting('editor.font-ligatures', false),
+  wordSeparators: '`~!@#$%^&*()-=+[{]}\\|;:\'",.<>/?。？！，、；：“”‘’（）《》〈〉【】『』「」﹃﹄〔〕',
+  rulers: getSetting('editor.rulers', '').split(',').filter(Boolean).map(Number),
+  mouseWheelScrollSensitivity: getSetting('editor.mouse-wheel-scroll-sensitivity', 1.0),
 })
 
 /**
@@ -108,12 +129,10 @@ export function getEditor () {
  * @param duration
  * @returns dispose function
  */
-export function highlightLine (line: number | [number, number], reveal: boolean, duration: number): Promise<void>
-export function highlightLine (line: number | [number, number], reveal?: boolean, duration?: number): (() => string[]) | Promise<void>
-export function highlightLine (line: number | [number, number], reveal?: boolean, duration?: number): (() => string[]) | Promise<void> {
+export function highlightLine (line: number | [number, number], reveal?: boolean, duration: number = 1000): (() => void) | Promise<void> {
   const lines = Array.isArray(line) ? line : [line, line]
 
-  const decorations = getEditor().deltaDecorations([], [
+  const decorations = getEditor().createDecorationsCollection([
     {
       range: new (getMonaco().Range)(lines[0], 0, lines[1], 999),
       options: {
@@ -127,7 +146,7 @@ export function highlightLine (line: number | [number, number], reveal?: boolean
     getEditor().revealLineNearTop(lines[0])
   }
 
-  const dispose = () => getEditor().deltaDecorations(decorations, [])
+  const dispose = () => decorations.clear()
 
   if (duration) {
     return sleep(duration).then(() => {
@@ -149,6 +168,23 @@ export function getOneIndent () {
 }
 
 /**
+ * Get language id of line.
+ * @param line
+ * @param model
+ * @returns
+ */
+export function getLineLanguageId (line: number, model?: Monaco.editor.ITextModel | null): string {
+  model ||= getEditor().getModel()
+
+  if ((model as any)?.tokenization?.grammarTokens?.getLineTokens) {
+    const lineTokens = (model as any).tokenization.grammarTokens.getLineTokens(line)
+    return lineTokens.getLanguageId()
+  } else {
+    throw new Error('Require model to be tokenized')
+  }
+}
+
+/**
  * Ensure editor is ready.
  * @returns
  */
@@ -160,6 +196,30 @@ export function whenEditorReady (): Promise<{ editor: typeof editor, monaco: typ
   return new Promise(resolve => {
     registerHook('EDITOR_READY', resolve, true)
   })
+}
+
+export function lookupKeybindingKeys (commandId: string): string[] | null {
+  if (!editor) {
+    return null
+  }
+
+  const service = (editor as any)._standaloneKeybindingService
+
+  const keybinding = service.lookupKeybinding(commandId) || service.lookupKeybinding(`vs.editor.ICodeEditor:1:${commandId}`)
+
+  let keys: string[] | null = null
+
+  if (keybinding) {
+    const electronAccelerator = keybinding.getElectronAccelerator()
+    const userSettingsLabel = keybinding.getUserSettingsLabel()
+    if (electronAccelerator) {
+      keys = electronAccelerator.split('+')
+    } else {
+      keys = userSettingsLabel?.split(' ')
+    }
+  }
+
+  return keys
 }
 
 /**
@@ -175,6 +235,7 @@ export function insert (text: string) {
       forceMoveMarkers: true
     }
   ])
+  editor.pushUndoStop()
   getEditor().focus()
 }
 
@@ -192,6 +253,7 @@ export function insertAt (position: Monaco.Position, text: string) {
       forceMoveMarkers: true
     }
   ])
+  editor.pushUndoStop()
   editor.setPosition(position)
   editor.focus()
 }
@@ -213,6 +275,7 @@ export function replaceLine (line: number, text: string) {
       forceMoveMarkers: true
     }
   ])
+  editor.pushUndoStop()
   editor.setPosition(new monaco.Position(line, text.length + 1))
   editor.focus()
 }
@@ -235,6 +298,7 @@ export function replaceLines (lineStart: number, lineEnd: number, text: string) 
       forceMoveMarkers: true
     }
   ])
+  editor.pushUndoStop()
   editor.setPosition(new monaco.Position(lineEnd, lineEndPos))
   editor.focus()
 }
@@ -247,6 +311,7 @@ export function deleteLine (line: number) {
       text: null
     }
   ])
+  editor.pushUndoStop()
   editor.setPosition(new (getMonaco().Position)(line, 1))
   editor.focus()
 }
@@ -288,17 +353,24 @@ export function getValue () {
  */
 export function setValue (text: string) {
   const model = editor.getModel()
-  const maxLine = model!.getLineCount()
-  const endLineLength = model!.getLineLength(maxLine)
+
+  if (!model) {
+    return
+  }
+
+  const viewState = editor.saveViewState()
 
   editor.executeEdits('', [
     {
-      range: new (getMonaco().Range)(1, 1, maxLine, endLineLength + 1),
+      range: model.getFullModelRange(),
       text,
       forceMoveMarkers: true
     }
   ])
-  getEditor().focus()
+  editor.pushUndoStop()
+
+  editor.restoreViewState(viewState)
+  editor.focus()
 }
 
 /**
@@ -320,7 +392,10 @@ export function replaceValue (search: string | RegExp, val: string, replaceAll =
  * @returns
  */
 export function getSelectionInfo () {
-  const selection = getEditor().getSelection()!
+  const selection = getEditor().getSelection()
+  if (!selection) {
+    return
+  }
 
   return {
     line: selection.positionLineNumber,
@@ -344,14 +419,14 @@ export function toggleWrap () {
     return
   }
 
-  store.commit('setWordWrap', (isWrapping ? 'off' : 'on'))
+  store.state.wordWrap = isWrapping ? 'off' : 'on'
 }
 
 /**
  * Toggle typewriter mode.
  */
 export function toggleTypewriterMode () {
-  store.commit('setTypewriterMode', !store.state.typewriterMode)
+  store.state.typewriterMode = !store.state.typewriterMode
 }
 
 /**
@@ -398,14 +473,28 @@ export function getMarkdownMonarchLanguage () {
  * @param name Editor name
  */
 export function switchEditor (name: string) {
-  store.commit('setEditor', name)
+  store.state.editor = name
 }
 
 /**
  * Register a custom editor.
  * @param editor Editor
+ * @param override Override the existing editor
  */
-export function registerCustomEditor (editor: CustomEditor) {
+export function registerCustomEditor (editor: CustomEditor, override = false) {
+  if (!editor.component && editor.name !== DEFAULT_MARKDOWN_EDITOR_NAME) {
+    throw new Error('Editor component is required')
+  }
+
+  // check if the editor is already registered
+  if (ioc.get('EDITOR_CUSTOM_EDITOR').some(item => item.name === editor.name)) {
+    if (override) {
+      removeCustomEditor(editor.name)
+    } else {
+      throw new Error(`Editor ${editor.name} is already registered`)
+    }
+  }
+
   ioc.register('EDITOR_CUSTOM_EDITOR', editor)
   triggerHook('EDITOR_CUSTOM_EDITOR_CHANGE', { type: 'register' })
 }
@@ -429,6 +518,31 @@ export function getAllCustomEditors () {
 }
 
 /**
+ * Get all available custom editors.
+ */
+export async function getAvailableCustomEditors (ctx: CustomEditorCtx): Promise<CustomEditor[]> {
+  const promises = getAllCustomEditors().map(async editor => {
+    try {
+      // check if the editor is supported for the other file types
+      if (ctx.doc && ctx.doc.type !== 'file' && !editor.supportNonNormalFile) {
+        return null
+      }
+
+      if (await editor.when(ctx)) {
+        return editor
+      } else {
+        return null
+      }
+    } catch (error) {
+      console.error(error)
+      return null
+    }
+  })
+
+  return (await Promise.all(promises)).filter(Boolean) as CustomEditor[]
+}
+
+/**
  * Trigger save.
  */
 export function triggerSave () {
@@ -439,17 +553,58 @@ export function triggerSave () {
  * Get current editor is default or not.
  * @returns
  */
-export function getIsDefault () {
-  return isDefaultEditor
+export function isDefault () {
+  // default editor has no component
+  return !currentEditor?.component
 }
 
-registerAction({ name: 'editor.toggle-wrap', handler: toggleWrap, keys: [Alt, 'w'] })
+/**
+ * Get current editor is dirty or not.
+ * @returns
+ */
+export async function isDirty (): Promise<boolean> {
+  // default editor, check documentSaved. TODO refactor
+  if (isDefault()) {
+    return !window.documentSaved
+  }
+
+  try {
+    return currentEditor?.getIsDirty ? (await currentEditor.getIsDirty()) : false
+  } catch (error) {
+    console.error(error)
+    return true
+  }
+}
+
+registerAction({
+  name: 'editor.toggle-wrap',
+  description: t('command-desc.editor_toggle-wrap'),
+  mcpDescription: 'Toggle word wrap. No args. No return.',
+  handler: toggleWrap,
+  forUser: true,
+  forMcp: true,
+  keys: [Alt, 'w']
+})
 
 registerHook('EDITOR_CURRENT_EDITOR_CHANGE', ({ current }) => {
-  isDefaultEditor = !current?.component
+  currentEditor = current
 })
 
 registerHook('MONACO_BEFORE_INIT', ({ monaco }) => {
+  // Quick fix: https://github.com/microsoft/monaco-editor/issues/2962
+  monaco.languages.register({ id: 'vs.editor.nullLanguage' })
+  monaco.languages.setLanguageConfiguration('vs.editor.nullLanguage', {})
+
+  monaco.languages.getLanguages().forEach(function (lang) {
+    if (lang.id === 'javascript') {
+      lang.aliases?.push('node')
+    } else if (lang.id === 'shell') {
+      lang.aliases?.push('bash')
+    } else if (lang.id === 'html') {
+      lang.aliases?.push('vue')
+    }
+  })
+
   monaco.editor.defineTheme('vs', {
     base: 'vs',
     inherit: true,
@@ -461,6 +616,8 @@ registerHook('MONACO_BEFORE_INIT', ({ monaco }) => {
     colors: {
       'editor.background': '#ffffff',
       'minimap.background': '#f2f2f2',
+      'editor.lineHighlightBackground': '#0000000f',
+      'list.focusHighlightForeground': '#2aaaff',
     }
   })
 
@@ -471,6 +628,7 @@ registerHook('MONACO_BEFORE_INIT', ({ monaco }) => {
     colors: {
       'editor.background': '#131416',
       'minimap.background': '#101113',
+      'editor.lineHighlightBackground': '#ffffff13',
     }
   })
 })
@@ -482,15 +640,11 @@ registerHook('MONACO_READY', (payload) => {
   triggerHook('EDITOR_READY', payload)
 })
 
-registerHook('MONACO_CHANGE_VALUE', payload => {
-  triggerHook('EDITOR_CHANGE', payload)
-})
-
 registerHook('THEME_CHANGE', () => {
   monaco?.editor.setTheme(getColorScheme() === 'dark' ? 'vs-dark' : 'vs')
 })
 
-store.watch(state => state.wordWrap, (wordWrap) => {
+store.watch(() => store.state.wordWrap, (wordWrap) => {
   whenEditorReady().then(({ editor }) => {
     editor.updateOptions({ wordWrap })
   })
@@ -505,6 +659,31 @@ whenEditorReady().then(({ editor }) => {
         editor.revealPositionInCenter(e.position)
       }
     }
+  })
+
+  editor.onDidChangeModelContent(() => {
+    const model = editor.getModel()!
+    const uri = model.uri.toString()
+    const value = model.getValue()
+
+    triggerHook('EDITOR_CONTENT_CHANGE', { uri, value })
+  })
+
+  editor.onDidAttemptReadOnlyEdit(() => {
+    const currentFile = store.state.currentFile
+    let readonlyType: 'app-readonly' | 'no-file' | 'file-not-writable' | 'unsupported-file-type'
+
+    if (FLAG_READONLY) {
+      readonlyType = 'app-readonly'
+    } else if (!currentFile) {
+      readonlyType = 'no-file'
+    } else if (currentFile.writeable === false) {
+      readonlyType = 'file-not-writable'
+    } else {
+      readonlyType = 'unsupported-file-type'
+    }
+
+    triggerHook('EDITOR_ATTEMPT_READONLY_EDIT', { doc: currentFile || null, readonlyType })
   })
 })
 

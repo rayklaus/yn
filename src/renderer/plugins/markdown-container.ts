@@ -103,8 +103,8 @@ export default {
 
       .markdown-view .markdown-body .custom-container.danger {
         border-color: #cc0000;
-        background-color: #ffe0e0;
-        color: #660000;
+        background-color: light-dark(#ffe0e0, #503f3f);
+        color: light-dark(#800000, #d9bebe);
       }
 
       .markdown-view .markdown-body .custom-container.warning {
@@ -200,36 +200,13 @@ export default {
       .markdown-view .markdown-body .custom-container.group .group-item-radio:checked + .group-item-label + .group-item-content {
         display: block;
       }
-
-      @media screen {
-        html[app-theme=dark] .markdown-view .markdown-body .custom-container.danger {
-          background-color: #503f3f;
-          color: #d9bebe;
-        }
-
-        html[app-theme=dark] .markdown-view .markdown-body .custom-container.warning {
-          background-color: #4a4738;
-          color: #cbb759;
-        }
-      }
-
-      @media (prefers-color-scheme: dark) {
-        html[app-theme=system] .markdown-view .markdown-body .custom-container.danger {
-          background-color: #503f3f;
-          color: #d9bebe;
-        }
-
-        html[app-theme=system] .markdown-view .markdown-body .custom-container.warning {
-          background-color: #4a4738;
-          color: #cbb759;
-        }
-      }
     `)
 
     let groupItemIdx = 0
     let groupItemSeq = 0
     let groupItemBase = Date.now()
     let groupItemName = groupItemBase + groupItemSeq
+    const groupItemContentClass = 'group-item-content'
 
     ctx.registerHook('MARKDOWN_BEFORE_RENDER', ({ env }) => {
       // first render, reset count
@@ -240,8 +217,24 @@ export default {
       groupItemSeq = 0
     })
 
+    function buildGroupItem (token: Token, title: string, attrs?: Record<string, string>) {
+      const parent = h('div', attrs || Object.fromEntries(token.attrs || []), [])
+      const radioName = `group-item-${groupItemName}`
+      const id = `group-item-${groupItemName}-${groupItemIdx++}`
+      const checked = groupItemIdx === 1 || title.startsWith('*')
+
+      return {
+        node: h(Fragment, [
+          h('input', { key: id, class: 'group-item-radio', id, name: radioName, type: 'radio', 'data-default-checked': checked, checked }),
+          h('label', { class: 'group-item-label', for: id }, title.replace('*', '').trim() || 'Group Item'),
+          parent
+        ]),
+        parent
+      }
+    }
+
     ctx.markdown.registerPlugin(md => {
-      ['tip', 'warning', 'danger', 'details', 'group-item', 'group', 'row', 'col', 'section'].forEach(name => {
+      ['tip', 'warning', 'danger', 'details', 'group-item', 'group', 'row', 'col', 'section', 'div', 'code-group'].forEach(name => {
         const reg = new RegExp(`^${name}\\s*(.*)$`)
 
         md.use(MarkdownItContainer, name, {
@@ -265,24 +258,14 @@ export default {
 
               const match = token.info.trim().match(reg)
               const title = md.utils.escapeHtml(match![1])
-              const containerClass = `custom-container ${name}`
+              const isGroup = name === 'group' || name === 'code-group'
+
+              const containerClass = isGroup ? 'custom-container group' : `custom-container ${name}`
 
               if (name === 'group-item') {
-                token.attrJoin('class', 'group-item-content')
-                const parent = h('div', Object.fromEntries(token.attrs || []), [])
-                const radioName = `group-item-${groupItemName}`
-                const id = `group-item-${groupItemName}-${groupItemIdx++}`
-                const checked = groupItemIdx === 1 || title.startsWith('*')
-
-                return {
-                  node: h(Fragment, [
-                    h('input', { key: id, class: 'group-item-radio', id, name: radioName, type: 'radio', 'data-default-checked': checked, checked }),
-                    h('label', { class: 'group-item-label', for: id }, title.replace('*', '').trim() || 'Group Item'),
-                    parent
-                  ]),
-                  parent
-                }
-              } else if (name === 'group') {
+                token.attrJoin('class', groupItemContentClass)
+                return buildGroupItem(token, title)
+              } else if (isGroup) {
                 groupItemIdx = 0
                 groupItemSeq++
                 groupItemName = groupItemBase + groupItemSeq
@@ -292,7 +275,7 @@ export default {
               const titleTag = name === 'details' ? 'summary' : 'p'
               const titleClass = name === 'details' ? '' : 'custom-container-title'
 
-              const children = (title || name === 'group') ? [h(titleTag, { class: titleClass }, title)] : []
+              const children = (title || isGroup) ? [h(titleTag, { class: titleClass }, title)] : []
 
               token.attrJoin('class', containerClass)
               if (title) {
@@ -301,8 +284,28 @@ export default {
 
               const props: Record<string, any> = Object.fromEntries(token.attrs || [])
 
-              if (name === 'group') {
+              if (isGroup) {
                 props.key = groupItemName
+              }
+
+              if (name === 'code-group') {
+                for (
+                  let i = idx + 1;
+                  !(
+                    tokens[i].nesting === -1 &&
+                    tokens[i].type === 'container_code-group_close'
+                  );
+                  ++i
+                ) {
+                  const token = tokens[i]
+                  if (token.type === 'fence' && token.tag === 'code') {
+                    if (!token.meta) {
+                      token.meta = {}
+                    }
+
+                    token.meta.isCodeGroupItem = true
+                  }
+                }
               }
 
               return h(containerTag, props, children)
@@ -310,6 +313,26 @@ export default {
           }
         })
       })
+
+      const renderFence = md.renderer.rules.fence!
+      const infoTitleReg = /\[([^\]]*)\]/
+
+      md.renderer.rules.fence = (tokens, idx, options, env, slf) => {
+        const token = tokens[idx]
+        if (token.meta && token.meta.isCodeGroupItem) {
+          const title = token.info.match(infoTitleReg)?.[1] || token.info || 'txt'
+          token.info = token.info.replace(infoTitleReg, '').trim()
+
+          const groupItem = buildGroupItem(token, title, { class: groupItemContentClass })
+          ;(groupItem.parent.children as any[]).push(
+            renderFence.call(slf, tokens, idx, options, env, slf)
+          )
+
+          return groupItem.node as any
+        }
+
+        return renderFence.call(slf, tokens, idx, options, env, slf)
+      }
     })
 
     ctx.registerHook('VIEW_ON_GET_HTML_FILTER_NODE', ({ node }) => {
@@ -322,9 +345,10 @@ export default {
       /* eslint-disable no-template-curly-in-string */
 
       items.push(
-        { label: '/ ::: Container', insertText: '${3|:::,::::,:::::|} ${1|tip,warning,danger,details,group,group-item,row,col,section|} ${2:Title}\n${4:Content}\n${3|:::,::::,:::::|}\n' },
-        { label: '/ ::: Group Container', insertText: ':::: group ${1:Title}\n::: group-item Tab 1\ntest 1\n:::\n::: group-item *Tab 2\ntest 2\n:::\n::: group-item Tab 3\ntest 3\n:::\n::::\n' },
-        { label: '/ ::: Column Container', insertText: ':::: row ${1:Title}\n::: col\ntest 1\n:::\n::: col\ntest 2\n:::\n::::\n' },
+        { language: 'markdown', label: '/ ::: Container', insertText: '${3|:::,::::,:::::|} ${1|tip,warning,danger,details,code-group,group,group-item,row,col,section,div|} ${2:Title}\n${4:Content}\n${3|:::,::::,:::::|}\n', block: true, surroundSelection: '${4:Content}' },
+        { language: 'markdown', label: '/ ::: Group Container', insertText: ':::: group ${1:Title}\n::: group-item Tab 1\ntest 1\n:::\n::: group-item *Tab 2\ntest 2\n:::\n::: group-item Tab 3\ntest 3\n:::\n::::\n', block: true },
+        { language: 'markdown', label: '/ ::: Code Group Container', insertText: '::: code-group ${1:Title}\n${2:```js [test.js]\nlet a = 1\n```\n\n```ts [test.ts]\nlet a: number = 1\n```}\n:::\n', block: true },
+        { language: 'markdown', label: '/ ::: Column Container', insertText: ':::: row ${1:Title}\n::: col\ntest 1\n:::\n::: col\ntest 2\n:::\n::::\n', block: true },
       )
     })
 

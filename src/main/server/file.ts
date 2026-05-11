@@ -1,4 +1,5 @@
-import { shell } from 'electron'
+import { app, shell } from 'electron'
+import ch from 'child_process'
 import orderBy from 'lodash/orderBy'
 import * as fs from 'fs-extra'
 import * as path from 'path'
@@ -6,12 +7,43 @@ import * as crypto from 'crypto'
 import * as yargs from 'yargs'
 import AdmZip from 'adm-zip'
 import dayjs from 'dayjs'
-import { DEFAULT_EXCLUDE_REGEX, DOC_HISTORY_MAX_CONTENT_LENGTH, ENCRYPTED_MARKDOWN_FILE_EXT, isEncryptedMarkdownFile, isMarkdownFile, MARKDOWN_FILE_EXT } from '../../share/misc'
+import { DEFAULT_EXCLUDE_REGEX, DOC_HISTORY_MAX_CONTENT_LENGTH, ENCRYPTED_MARKDOWN_FILE_EXT, isEncryptedMarkdownFile, isMarkdownFile, MARKDOWN_FILE_EXT, ROOT_REPO_NAME_PREFIX } from '../../share/misc'
+import { createStreamResponse } from '../helper'
 import { HISTORY_DIR } from '../constant'
 import config from '../config'
 import repository from './repository'
+import type { WatchOpts } from './watch-worker'
+
+// make sure watch-worker.ts is compiled
+import './watch-worker'
 
 const readonly = !!(yargs.argv.readonly)
+
+let _watchProcess: ch.ChildProcess | null = null
+let watchGid = 0
+
+function getWatchProcess () {
+  if (!_watchProcess) {
+    console.log('start watch-worker process')
+    _watchProcess = ch.fork(
+      path.join(__dirname, '/watch-worker.js'),
+      {
+        env: { ELECTRON_RUN_AS_NODE: '1' },
+        // execArgv: ['--inspect']
+      }
+    )
+
+    _watchProcess.on('exit', () => {
+      _watchProcess = null
+    })
+
+    _watchProcess.on('error', () => {
+      _watchProcess = null
+    })
+  }
+
+  return _watchProcess
+}
 
 interface XFile {
   name: string;
@@ -39,13 +71,25 @@ function getExcludeRegex () {
 }
 
 function withRepo<T> (repo = 'main', callback: (repoPath: string, ...targetPath: string[]) => Promise<T>, ...target: string[]): Promise<T> {
-  const repoPath = repository.getPath(repo)
+  const isRootRepo = repo.startsWith(ROOT_REPO_NAME_PREFIX)
+
+  const repoPath = isRootRepo
+    ? repo.substring(ROOT_REPO_NAME_PREFIX.length)
+    : repository.getPath(repo)
+
   if (!repoPath) {
     throw new Error(`repo ${repo} not exists.`)
   }
 
   return callback(repoPath, ...target.map(x => {
-    const targetPath = path.join(repoPath, x)
+    // fix path
+    if (!x.startsWith('/')) {
+      x = '/' + x
+    }
+
+    const targetPath = isRootRepo
+      ? x.replace(/^\//, repoPath) // replace first / to repoPath for case of `\\127.0.0.1/test/a.md`
+      : path.join(repoPath, x)
 
     if (!targetPath.startsWith(repoPath)) {
       throw new Error('Path error.')
@@ -84,7 +128,7 @@ function writeHistoryZip (zip: AdmZip, zipFilePath: string) {
 }
 
 async function writeHistory (filePath: string, content: any) {
-  const limit = Math.min(10000, config.get('doc-history.number-limit', 500))
+  let limit = Math.min(10000, config.get('doc-history.number-limit', 500))
   if (limit < 1) {
     return
   }
@@ -92,8 +136,15 @@ async function writeHistory (filePath: string, content: any) {
   const historyFilePath = getHistoryFilePath(filePath)
 
   let zip: AdmZip
+  let tooLarge = false
 
   if ((await fs.pathExists(historyFilePath))) {
+    const stats = await fs.stat(historyFilePath)
+    if (stats.size > 1024 * 1024 * 5) { // 5M
+      console.log('history file too large, limit max versions.', historyFilePath, stats.size)
+      tooLarge = true
+    }
+
     zip = readHistoryZip(historyFilePath)
   } else {
     zip = new AdmZip()
@@ -103,7 +154,12 @@ async function writeHistory (filePath: string, content: any) {
 
   zip.addFile(dayjs().format('YYYY-MM-DD HH-mm-ss') + ext, content)
 
-  orderBy(zip.getEntries(), x => x.entryName, 'desc').slice(limit).forEach(entry => {
+  const entries = zip.getEntries()
+  if (tooLarge) {
+    limit = Math.min(limit, Math.floor(entries.length / 3 * 2))
+  }
+
+  orderBy(entries, x => x.entryName, 'desc').slice(limit).forEach(entry => {
     if (!entry.comment) {
       zip.deleteFile(entry)
     }
@@ -135,12 +191,43 @@ export function read (repo: string, p: string): Promise<Buffer> {
   return withRepo(repo, (_, targetPath) => fs.readFile(targetPath), p)
 }
 
+export function createReadStream (repo: string, p: string, options?: Parameters<typeof fs.createReadStream>[1]): Promise<ReturnType<typeof fs.createReadStream>> {
+  return withRepo(repo, async (_, targetPath) => fs.createReadStream(targetPath, options), p)
+}
+
+export function stat (repo: string, p: string) {
+  return withRepo(repo, async (_, targetPath) => {
+    const stat = await fs.stat(targetPath)
+
+    return {
+      birthtime: stat.birthtimeMs,
+      mtime: stat.mtimeMs,
+      size: stat.size,
+    }
+  }, p)
+}
+
+export function checkWriteable (repo: string, p: string) {
+  return withRepo(repo, async (_, targetPath) => {
+    if (readonly) {
+      return false
+    }
+
+    try {
+      await fs.access(targetPath, fs.constants.W_OK)
+      return true
+    } catch (error) {
+      return false
+    }
+  }, p)
+}
+
 export function write (repo: string, p: string, content: any): Promise<string> {
   if (readonly) throw new Error('Readonly')
 
   return withRepo(repo, async (_, filePath) => {
-    // create dir.
-    if (filePath.endsWith(path.sep)) {
+    // create dir. Check original path `p` because path.join() in withRepo strips trailing slashes.
+    if (p.endsWith('/') || filePath.endsWith(path.sep)) {
       await fs.ensureDir(filePath)
       return ''
     }
@@ -160,12 +247,16 @@ export function write (repo: string, p: string, content: any): Promise<string> {
   }, p)
 }
 
-export async function rm (repo: string, p: string) {
+export async function rm (repo: string, p: string, trash = true) {
   if (readonly) throw new Error('Readonly')
 
   await withRepo(repo, async (repoPath, targetPath) => {
     if (targetPath !== repoPath) {
-      await shell.trashItem(targetPath)
+      if (trash) {
+        await shell.trashItem(targetPath)
+      } else {
+        await fs.remove(targetPath)
+      }
     }
   }, p)
 }
@@ -204,9 +295,38 @@ export async function checkHash (repo: string, p: string, oldHash: string) {
   return oldHash === await hash(repo, p)
 }
 
-export async function upload (repo: string, buffer: Buffer, path: string) {
+export async function upload (repo: string, buffer: Buffer, filePath: string, ifExists: 'rename' | 'overwrite' | 'skip' | 'error' = 'error'): Promise<{ path: string, hash: string }> {
   if (readonly) throw new Error('Readonly')
-  await write(repo, path, buffer)
+
+  let newFilePath = filePath
+
+  if (await exists(repo, filePath)) {
+    if (ifExists === 'overwrite') {
+      // do nothing
+    } else if (ifExists === 'skip') {
+      return { path: filePath, hash: await hash(repo, filePath) }
+    } else if (ifExists === 'rename') {
+      const dir = path.dirname(filePath)
+      const ext = path.extname(filePath)
+      const base = path.basename(filePath, ext)
+
+      let i = 1
+      while (await exists(repo, newFilePath)) {
+        i++
+
+        if (i > 10000) {
+          throw new Error('Too many files with the same name')
+        }
+
+        const seq = i > 100 ? Math.floor(Math.random() * 1000000) : i
+        newFilePath = path.join(dir, base + `-${seq}` + ext).replace(/\\/g, '/')
+      }
+    } else {
+      throw new Error('File exists')
+    }
+  }
+
+  return { path: newFilePath, hash: await write(repo, newFilePath, buffer) }
 }
 
 function getRelativePath (from: string, to: string) {
@@ -219,7 +339,9 @@ async function travels (
   basePath: string,
   data: TreeItem,
   excludeRegex: RegExp,
+  includeRegex: RegExp | null,
   order: Order,
+  noEmptyDir: boolean
 ): Promise<void> {
   const list = await fs.readdir(location)
 
@@ -228,40 +350,59 @@ async function travels (
 
   await Promise.all(list.map(async name => {
     const p = path.join(location, name)
-    const stat = await fs.stat(p)
+    const stat = await fs.stat(p).catch(e => {
+      console.error('travels', p, e)
+      return null
+    })
+
+    if (!stat) {
+      return
+    }
 
     if (stat.isFile()) {
       if (excludeRegex.test(name)) {
         return
       }
 
+      if (includeRegex && !includeRegex.test(name)) {
+        return
+      }
+
       files.push({
-        name: name,
+        name,
         path: getRelativePath(basePath, p),
         type: 'file',
-        repo: repo,
+        repo,
         birthtime: stat.birthtimeMs,
         mtime: stat.mtimeMs,
         level: data.level + 1,
       })
     } else if (stat.isDirectory()) {
-      if (excludeRegex.test(name + '/')) {
+      const dirName = name + '/'
+      if (excludeRegex.test(dirName)) {
+        return
+      }
+
+      if (includeRegex && !includeRegex.test(dirName)) {
         return
       }
 
       const dir: TreeItem = {
-        name: name,
+        name,
         path: getRelativePath(basePath, p),
         type: 'dir',
-        repo: repo,
+        repo,
         children: [],
         birthtime: stat.birthtimeMs,
         mtime: stat.mtimeMs,
         level: data.level + 1,
       }
 
-      dirs.push(dir)
-      await travels(p, repo, basePath, dir, excludeRegex, order)
+      await travels(p, repo, basePath, dir, excludeRegex, includeRegex, order, noEmptyDir)
+
+      if (!(noEmptyDir && dir.children!.length === 0)) {
+        dirs.push(dir)
+      }
     }
   }))
 
@@ -282,17 +423,23 @@ async function travels (
     .concat(sort(files, order))
 }
 
-export async function tree (repo: string, order: Order): Promise<TreeItem[]> {
+export async function tree (repo: string, order: Order, include?: string | RegExp, noEmptyDir?: boolean): Promise<TreeItem[]> {
+  if (repo.startsWith(ROOT_REPO_NAME_PREFIX)) {
+    return []
+  }
+
   const data: TreeItem[] = [{
     name: '/',
     type: 'dir',
     path: '/',
-    repo: repo,
+    repo,
     children: [],
     level: 1,
   }]
 
-  await withRepo(repo, async repoPath => travels(repoPath, repo, repoPath, data[0], getExcludeRegex(), order))
+  const includeRegex = include ? new RegExp(include) : null
+
+  await withRepo(repo, async repoPath => travels(repoPath, repo, repoPath, data[0], getExcludeRegex(), includeRegex, order, !!noEmptyDir))
 
   return data
 }
@@ -345,7 +492,7 @@ export async function search (repo: string, str: string) {
             name: x.name,
             path: getRelativePath(basePath, p),
             type: 'file',
-            level: level,
+            level,
           })
         }
       }
@@ -362,14 +509,17 @@ export function historyList (repo: string, path: string) {
     const historyFilePath = getHistoryFilePath(filePath)
 
     if (!(await fs.pathExists(historyFilePath))) {
-      return []
+      return { list: [], size: 0 }
     }
 
+    const stats = await fs.stat(historyFilePath)
     const zip = readHistoryZip(historyFilePath)
-    return orderBy(zip.getEntries(), x => x.entryName, 'desc').map(x => ({
+    const list = orderBy(zip.getEntries(), x => x.entryName, 'desc').map(x => ({
       name: x.entryName,
       comment: x.comment
     }))
+
+    return { list, size: stats.size }
   }, path)
 }
 
@@ -437,4 +587,74 @@ export async function commentHistoryVersion (repo: string, p: string, version: s
 
     writeHistoryZip(zip, historyFilePath)
   }, p)
+}
+
+export async function watchFile (repo: string, p: string | string[], options: WatchOpts) {
+  return withRepo(repo, async (_, ...args) => {
+    const filePath = args.length === 1 ? args[0] : args
+
+    const { response, enqueue, close } = createStreamResponse()
+
+    type Message = { id: number, type: 'init' | 'stop' | 'enqueue', payload?: any }
+
+    watchGid++
+
+    const id = watchGid
+
+    const wp = getWatchProcess()
+
+    wp.send({ id, type: 'init', payload: { filePath, options } } satisfies Message)
+
+    const onMessage = (message: Message) => {
+      if (message.id !== id) {
+        return
+      }
+
+      if (message.type === 'enqueue') {
+        try {
+          if (!response.closed) {
+            enqueue(message.payload.type, message.payload.data)
+          }
+        } catch (error) {
+          console.error('watchFile', filePath, 'enqueue error', error)
+        }
+      }
+    }
+
+    const onError = (err: any) => {
+      console.error('watchFile', filePath, 'error', err)
+      _stop()
+    }
+
+    const onExit = (code: any) => {
+      close()
+      console.log('watchFile', id, filePath, 'exit', code)
+    }
+
+    const _stop = () => {
+      console.log('watchFile', id, filePath, 'stop')
+      wp.send({ id, type: 'stop' } satisfies Message)
+      app.off('quit', _stop)
+      wp.off('message', onMessage)
+      wp.off('error', onError)
+      wp.off('exit', onExit)
+    }
+
+    wp.on('message', onMessage)
+    wp.on('error', onError)
+    wp.on('exit', onExit)
+    app.on('quit', _stop)
+
+    response.once('close', () => {
+      console.log('watchFile', id, filePath, 'response close')
+      _stop()
+    })
+
+    response.once('error', (err) => {
+      console.warn('watchFile', id, filePath, 'error', err)
+      _stop()
+    })
+
+    return response
+  }, ...(Array.isArray(p) ? p : [p]))
 }

@@ -7,6 +7,7 @@
       :open="open"
       :data-count="itemNode.children?.length"
       :data-level="itemNode.level"
+      :data-should-open="shouldOpen"
       @toggle="(e: any) => open = e.target.open"
       @dragenter="onDragEnter"
       @dragover="onDragOver"
@@ -18,13 +19,12 @@
         :class="{folder: true, 'folder-selected': selected}"
         :style="`padding-left: ${itemNode.level}em`"
         @contextmenu.exact.prevent.stop="showContextMenu(itemNode)">
-        <div class="item">
+        <div class="item" @mouseenter.self="onMouseEnter" @mouseleave.self="onMouseLeave">
           <div class="item-label" draggable="true" @dragstart="onDragStart">
             {{ itemNode.name }} <span class="count">({{itemNode.children ? itemNode.children.length : 0}})</span>
           </div>
           <div class="item-action">
-            <svg-icon class="icon" name="folder-plus-solid" @click.exact.stop.prevent="createFolder()" :title="$t('tree.context-menu.create-dir')"></svg-icon>
-            <svg-icon class="icon" name="plus" @click.exact.stop.prevent="createFile()" :title="$t('tree.context-menu.create-doc')"></svg-icon>
+            <svg-icon v-for="btn in actions" :key="btn.id" class="icon" :name="btn.icon" @click.exact.stop.prevent="btn.onClick" :title="btn.title" />
           </div>
         </div>
       </summary>
@@ -52,17 +52,19 @@
 </template>
 
 <script lang="ts">
-import { computed, defineComponent, h, nextTick, PropType, ref, watch } from 'vue'
-import { useStore } from 'vuex'
+import { computed, defineComponent, h, nextTick, PropType, ref, shallowRef, watch } from 'vue'
 import { useContextMenu } from '@fe/support/ui/context-menu'
 import { triggerHook } from '@fe/core/hook'
-import { getContextMenuItems } from '@fe/services/tree'
+import { getContextMenuItems, getNodeActionButtons, refreshTree } from '@fe/services/tree'
 import type { Components } from '@fe/types'
-import { createDir, createDoc, deleteDoc, duplicateDoc, isMarkdownFile, isMarked, moveDoc, switchDoc } from '@fe/services/document'
+import { deleteDoc, duplicateDoc, isMarkdownFile, isMarked, moveDoc, switchDoc } from '@fe/services/document'
 import { useI18n } from '@fe/services/i18n'
 import { dirname, extname, isBelongTo, join } from '@fe/utils/path'
 import { useToast } from '@fe/support/ui/toast'
-import type { AppState } from '@fe/support/store'
+import { FLAG_READONLY } from '@fe/support/args'
+import { encodeMarkdownLink, escapeMd, fileToBase64URL } from '@fe/utils'
+import store from '@fe/support/store'
+import { upload } from '@fe/support/api'
 import SvgIcon from './SvgIcon.vue'
 
 export default defineComponent({
@@ -77,14 +79,14 @@ export default defineComponent({
   setup (props) {
     const { t } = useI18n()
 
-    const store = useStore<AppState>()
     const toast = useToast()
 
     const refFile = ref<any>(null)
     const localMarked = ref<boolean | null>(null)
     const dragOver = ref<boolean>(false)
+    const actions = shallowRef<Components.Tree.NodeActionBtn[]>([])
 
-    const itemNode = computed(() => ({ ...props.item, marked: props.item.type === 'file' && isMarked(props.item) }))
+    const itemNode = computed(() => ({ ...props.item, marked: isMarked(props.item) }))
     const open = ref(itemNode.value.path === '/')
 
     watch(() => props.item, () => {
@@ -93,12 +95,12 @@ export default defineComponent({
 
     const currentFile = computed(() => store.state.currentFile)
 
-    async function createFile () {
-      await createDoc({ repo: props.item.repo }, props.item)
+    function onMouseEnter () {
+      actions.value = getNodeActionButtons(props.item)
     }
 
-    async function createFolder () {
-      await createDir({ repo: props.item.repo }, props.item)
+    function onMouseLeave () {
+      actions.value = []
     }
 
     function onTreeNodeDblClick (node: Components.Tree.Node) {
@@ -180,6 +182,20 @@ export default defineComponent({
           showToast('moved', newPath)
         }
       }
+    }
+
+    async function handleFileUpload (files: FileList) {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i]
+        const base64 = await fileToBase64URL(file)
+        const path = join(itemNode.value.path, file.name)
+
+        await upload(props.item.repo, base64, path, 'rename').catch((e) => {
+          toast.show('warning', e.message)
+        })
+      }
+
+      refreshTree()
     }
 
     let dragOverTimer: number
@@ -271,7 +287,17 @@ export default defineComponent({
 
     function onDragStart (e: DragEvent) {
       e.stopPropagation()
-      e.dataTransfer!.setData('text/plain', 'tree-node-' + JSON.stringify(itemNode.value))
+
+      const node = itemNode.value
+      if (isMarkdownFile(node)) {
+        e.dataTransfer!.setData('text/plain', `[${escapeMd(node.name)}](${encodeMarkdownLink(node.path)})`)
+      } else if (node.type === 'file' && /\.(png|jpe?g|gif|svg|webp)$/i.test(node.name)) {
+        e.dataTransfer!.setData('text/plain', `![Img](${encodeMarkdownLink(node.path)})`)
+      } else {
+        e.dataTransfer!.setData('text/plain', node.path)
+      }
+
+      e.dataTransfer!.setData('node-info', JSON.stringify(node))
     }
 
     function onDrop (e: DragEvent) {
@@ -279,10 +305,18 @@ export default defineComponent({
       e.stopPropagation()
       changeDragOver(false)
 
-      const data = e.dataTransfer?.getData('text')
-      if (data && data.startsWith('tree-node-')) {
-        const item = JSON.parse(data.replace('tree-node-', '')) as Components.Tree.Node
+      const data = e.dataTransfer?.getData('node-info')
+      if (data) {
+        const item = JSON.parse(data) as Components.Tree.Node
         handleFileDrop(item, e.altKey)
+      } else {
+        const isDragFile = !!e.dataTransfer?.items &&
+          e.dataTransfer.items.length > 0 &&
+          e.dataTransfer.items[0].kind === 'file'
+
+        if (isDragFile) {
+          handleFileUpload(e.dataTransfer.files)
+        }
       }
     }
 
@@ -299,7 +333,12 @@ export default defineComponent({
     })
 
     const shouldOpen = computed(() => {
-      return itemNode.value.type === 'dir' && currentFile.value && currentFile.value.path.startsWith(itemNode.value.path + '/') && currentFile.value.repo === itemNode.value.repo
+      if (itemNode.value.type === 'dir' && currentFile.value) {
+        // open the folder when the file is in the folder
+        return itemNode.value.path === '/' || (currentFile.value.path.startsWith(itemNode.value.path + '/') && currentFile.value.repo === itemNode.value.repo)
+      }
+
+      return false
     })
 
     const marked = computed(() => localMarked.value ?? itemNode.value.marked)
@@ -331,12 +370,11 @@ export default defineComponent({
       refFile,
       fileTitle,
       selected,
+      actions,
       onTreeNodeDblClick,
       marked,
       showContextMenu,
       select,
-      createFile,
-      createFolder,
       dragOver,
       onDragEnter,
       onDragOver,
@@ -344,7 +382,11 @@ export default defineComponent({
       onDragExit,
       onDrop,
       onDragStart,
+      onMouseEnter,
+      onMouseLeave,
+      shouldOpen,
       isMarkdownFile,
+      FLAG_READONLY,
     }
   },
 })
@@ -355,7 +397,7 @@ export default defineComponent({
   font-size: 15px;
   line-height: 26px;
   cursor: default;
-  color: var(--g-color-5);
+  color: var(--g-color-2);
 }
 
 .tree-node * {
@@ -420,6 +462,8 @@ summary > .item {
   text-overflow: ellipsis;
   word-break: break-all;
   height: 26px;
+  font-variant-numeric: tabular-nums;
+  flex-grow: 1;
 }
 
 .item-action {
@@ -437,12 +481,12 @@ summary > .item {
   height: 20px;
   width: 20px;
   border-radius: 50%;
-  color: var(--g-color-45);
+  color: var(--g-color-30);
 }
 
 .item-action .icon:hover {
   background: var(--g-color-70);
-  color: var(--g-color-25);
+  color: var(--g-color-20);
 }
 
 .item:hover .item-action {
@@ -472,6 +516,10 @@ summary > .item {
   outline: 2px #4790fe dashed;
   outline-offset: -4px;
   transition-delay: 0s;
+
+  summary {
+    contain: none;
+  }
 }
 
 .file-name {
@@ -507,7 +555,18 @@ summary > .item {
 }
 
 .marked {
-  color: #569bd5;
+  position: relative;
+}
+
+.marked::after {
+  content: '';
+  width: 10px;
+  height: 10px;
+  background: #569bd5;
+  border-radius: 50%;
+  position: absolute;
+  left: -5px;
+  top: 34%;
 }
 
 .name {

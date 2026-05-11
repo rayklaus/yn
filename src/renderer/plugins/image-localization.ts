@@ -1,15 +1,30 @@
 import mime from 'mime'
 import * as api from '@fe/support/api'
-import { encodeMarkdownLink } from '@fe/utils'
+import { encodeMarkdownLink, removeQuery } from '@fe/utils'
 import { useToast } from '@fe/support/ui/toast'
 import store from '@fe/support/store'
-import { CtrlCmd, isCommand, LeftClick, Shift } from '@fe/core/command'
 import { replaceValue } from '@fe/services/editor'
 import { refreshTree } from '@fe/services/tree'
 import { upload } from '@fe/services/base'
 import { getViewDom } from '@fe/services/view'
 import type { Plugin } from '@fe/context'
 import type { BuildInActionName } from '@fe/types'
+
+const LOCALIZABLE_IMAGE_SRC_RE = /^(https?:\/\/|data:|file:\/\/)/i
+
+function getImageName (src: string) {
+  const name = removeQuery(src).split('/').pop()
+
+  if (!name) {
+    return undefined
+  }
+
+  try {
+    return decodeURIComponent(name)
+  } catch (error) {
+    return name
+  }
+}
 
 async function transformImgOutLink (img: HTMLImageElement) {
   const { currentFile } = store.state
@@ -37,25 +52,40 @@ async function transformImgOutLink (img: HTMLImageElement) {
 
   let replacedLink = ''
   const imgAttrSrc = img.getAttribute('src') || ''
+  const originLink = imgAttrSrc || img.src
   if (img.src.startsWith('data:')) {
     replacedLink = await transform(img)
-  } else if (imgAttrSrc.startsWith('http://') || imgAttrSrc.startsWith('https://')) {
-    const headers = JSON.parse(img.getAttribute('headers') || '{}')
-    const res = await api.proxyRequest(img.src, { method: 'get', headers })
+  } else if (/^https?:\/\//i.test(imgAttrSrc) || /^file:\/\//i.test(originLink)) {
+    const isFileProtocol = /^file:\/\//i.test(originLink)
+    const res = isFileProtocol
+      ? await fetch(img.src)
+      : await api.proxyFetch(img.src, { headers: JSON.parse(img.getAttribute('headers') || '{}') })
     const blob = await res.blob()
-    const imgFile = new File([blob!], 'file.' + mime.getExtension(res.headers.get('content-type')!))
-    const assetPath = await upload(imgFile, currentFile)
+    const contentType = res.headers.get('content-type') || blob.type || mime.getType(originLink) || ''
+
+    if (!contentType.startsWith('image/')) {
+      throw new Error('Not an image')
+    }
+
+    const ext = mime.getExtension(contentType) || ''
+    const imgFile = new File([blob!], 'file.' + ext)
+    const name = getImageName(originLink) // get file name from url
+    const assetPath = await upload(
+      imgFile,
+      currentFile,
+      ext === name?.split('.').pop() ? name : undefined // if ext is not same as file name, use file name
+    )
     replacedLink = assetPath
   }
 
   if (replacedLink) {
-    return { oldLink: img.src, replacedLink: encodeMarkdownLink(replacedLink) }
+    return { oldLink: originLink, replacedLink: encodeMarkdownLink(replacedLink) }
   }
 
   return null
 }
 
-const actionKeydown: BuildInActionName = 'plugin.image-localization.all'
+const actionKeydown: BuildInActionName = 'plugin.image-localization.download-all'
 const commandClick = 'plugin.image-localization.single-by-click'
 
 async function transformAll () {
@@ -81,46 +111,29 @@ async function transformAll () {
   refreshTree()
 }
 
-async function handleClick ({ e }: { e: MouseEvent }) {
-  const target = e.target as HTMLElement
-  if (target.tagName !== 'IMG') {
-    return false
-  }
-
-  const img = target as HTMLImageElement
-  if (isCommand(e, commandClick)) { // download image to local
-    const data = await transformImgOutLink(img)
-    if (data) {
-      replaceValue(data.oldLink, data.replacedLink)
-      refreshTree()
-    }
-  } else {
-    return false
-  }
-
-  e.stopPropagation()
-  e.preventDefault()
-
-  return true
-}
-
 export default {
   name: 'image-localization',
   register: (ctx) => {
+    function when () {
+      const currentFile = ctx.store.state.currentFile
+      const previewFile = ctx.view.getRenderEnv()?.file
+
+      return !!(currentFile && ctx.editor.isDefault() && ctx.doc.isSameFile(currentFile, previewFile))
+    }
+
     ctx.action.registerAction({
       name: actionKeydown,
-      handler: transformAll
+      handler: transformAll,
+      description: ctx.i18n.t('command-desc.plugin_image-localization_all'),
+      forUser: true,
+      forMcp: true,
+      mcpDescription: 'Transform remote images to local. No args. No return.',
+      when,
     })
-
-    ctx.command.registerCommand({
-      id: commandClick,
-      keys: [CtrlCmd, Shift, LeftClick],
-      handler: null
-    })
-
-    ctx.registerHook('VIEW_ELEMENT_CLICK', handleClick)
 
     ctx.statusBar.tapMenus(menus => {
+      if (!when()) return
+
       menus['status-bar-tool']?.list?.push(
         {
           id: actionKeydown,
@@ -132,11 +145,13 @@ export default {
     })
 
     ctx.view.tapContextMenus((items, e) => {
+      if (!when()) return
+
       const el = e.target as HTMLElement
 
       if (
         el.tagName === 'IMG' &&
-        /^https:\/\/|^http:\/\/|^data:/.test(el.getAttribute('src') || '')
+        LOCALIZABLE_IMAGE_SRC_RE.test(el.getAttribute('src') || '')
       ) {
         items.push({
           id: commandClick,

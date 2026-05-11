@@ -2,7 +2,7 @@ import { defineComponent, h, nextTick, onBeforeUnmount, onMounted, ref, watch } 
 import { debounce } from 'lodash-es'
 import Renderer from 'markdown-it/lib/renderer'
 import { Plugin } from '@fe/context'
-import { downloadDataURL, getLogger, sleep, strToBase64 } from '@fe/utils'
+import { downloadDataURL, getLogger, strToBase64, waitCondition } from '@fe/utils'
 import { openWindow } from '@fe/support/env'
 import * as storage from '@fe/utils/storage'
 import { buildSrc } from '@fe/support/embed'
@@ -21,9 +21,11 @@ let links = ''
 let mindMapId = 0
 const instances = new Map()
 let window: any // render iframe content window
+let document: any // render iframe content document
 
 async function processRenderWindow () {
   window = (await getRenderIframe()).contentWindow!
+  document = window.document
 
   // kityminder has memory leak at CustomEvent, make CustomEvent readonly
   const CustomEvent = window.CustomEvent
@@ -50,6 +52,8 @@ async function processRenderWindow () {
 processRenderWindow()
 
 async function newMinder () {
+  await waitCondition(() => !!(window.kityminder?.Minder))
+
   // hack addEventListener, fix memory leak.
   const realAddEventListener = window.addEventListener.bind(window)
   const events: {type: string, listener: any}[] = []
@@ -59,12 +63,7 @@ async function newMinder () {
     realAddEventListener(type, listener)
   }
 
-  let kityminder = window.kityminder
-  if (!kityminder) {
-    await sleep(800)
-    kityminder = window.kityminder
-  }
-
+  const kityminder = window.kityminder
   const km = new kityminder.Minder()
 
   // restore addEventListener
@@ -370,6 +369,8 @@ const init = async (ele: HTMLElement) => {
 }
 
 const render = async (km: any, content: string) => {
+  if (!km) return
+
   let code = (content || '').trim()
 
   try {
@@ -383,7 +384,7 @@ const render = async (km: any, content: string) => {
     await km.importData('text', code)
   } catch (error) {
     await km.importData('text', t('mind-map.convert-error'))
-    km.execCommand('camera')
+    km?.execCommand('camera')
   }
 }
 
@@ -411,8 +412,8 @@ const MindMap = defineComponent({
         km = await init(container.value)
         km.disableAnimationAwhile(async () => {
           await render(km, props.content)
-          km.execCommand('hand')
-          km.execCommand('camera')
+          km?.execCommand('hand')
+          km?.execCommand('camera')
         })
         instances.set(id, km)
       } else {
@@ -578,7 +579,7 @@ export default {
       /* eslint-disable no-template-curly-in-string */
 
       items.push(
-        { label: '/ + MindMap', insertText: '+ ${1:Subject}{.mindmap}\n    + ${2:Topic}' },
+        { language: 'markdown', label: '/ + MindMap', insertText: '+ ${1:Subject}{.mindmap}\n    + ${2:Topic}', block: true },
       )
     })
   }

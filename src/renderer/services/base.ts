@@ -2,16 +2,17 @@ import { slugify } from 'transliteration'
 import filenamify from 'filenamify/browser'
 import type { Doc, FindInRepositoryQuery } from '@fe/types'
 import * as api from '@fe/support/api'
-import { getSetting } from './setting'
-import { FLAG_DEMO } from '@fe/support/args'
-import { binMd5, quote, fileToBase64URL, getLogger, removeQuery } from '@fe/utils'
+import { FLAG_DEMO, HELP_REPO_NAME } from '@fe/support/args'
+import { binMd5, quote, fileToBase64URL, getLogger } from '@fe/utils'
 import { basename, resolve, extname, dirname, relative, isBelongTo } from '@fe/utils/path'
 import { dayjs } from '@fe/context/lib'
 import { useModal } from '@fe/support/ui/modal'
 import { useToast } from '@fe/support/ui/toast'
 import { isElectron, isWindows } from '@fe/support/env'
-import { t } from './i18n'
 import { getActionHandler } from '@fe/core/action'
+import { triggerHook } from '@fe/core/hook'
+import { getSetting } from './setting'
+import { t } from './i18n'
 
 const logger = getLogger('service-base')
 
@@ -26,13 +27,12 @@ export function getAttachmentURL (doc: Doc, opts: { origin: boolean } = { origin
     throw new Error('Document type must be file')
   }
 
-  const fileName = removeQuery(doc.name)
   const repo = doc.repo
-  const filePath = doc.path
+  const filePath = resolve(doc.path)
 
-  const uri = repo === '__help__'
+  const uri = repo === HELP_REPO_NAME
     ? `/api/help/file?path=${encodeURIComponent(filePath)}`
-    : `/api/attachment/${encodeURIComponent(fileName)}?repo=${repo}&path=${encodeURIComponent(filePath)}`
+    : `/api/attachment/${encodeURIComponent(repo)}${encodeURI(filePath)}`
 
   if (opts.origin) {
     return `${window.location.origin}${uri}`
@@ -48,7 +48,7 @@ export function getAttachmentURL (doc: Doc, opts: { origin: boolean } = { origin
  * @param name filename
  * @returns
  */
-export async function upload (file: File, belongDoc: Pick<Doc, 'repo' | 'path'>, name?: string) {
+export async function upload (file: File, belongDoc: Pick<Doc, 'repo' | 'path'>, name?: string, ifExists: 'rename' | 'overwrite' | 'skip' | 'error' = 'rename'): Promise<string> {
   if (FLAG_DEMO) {
     return Promise.resolve(URL.createObjectURL(file))
   }
@@ -59,17 +59,22 @@ export async function upload (file: File, belongDoc: Pick<Doc, 'repo' | 'path'>,
   const parentName = basename(belongDoc.path)
   const parentPath = dirname(belongDoc.path)
   const assetsPathType = getSetting('assets.path-type', 'auto')
+  const parentNameWithoutMdExt = parentName.replace(/\.md$/i, '')
   const assetsDir = getSetting('assets-dir', './FILES/{docName}')
-    .replaceAll('{docSlug}', parentName.startsWith('.') ? 'upload' : slugify(parentName))
+    .replaceAll('{docSlug}', parentName.startsWith('.') ? 'upload' : slugify(parentNameWithoutMdExt))
     .replaceAll('{docName}', parentName.startsWith('.') ? 'upload' : filenamify(parentName))
-    .replaceAll('{docBasename}', parentName.startsWith('.') ? 'upload' : filenamify(parentName).replace(/\.md$/i, ''))
+    .replaceAll('{docBasename}', parentName.startsWith('.') ? 'upload' : filenamify(parentNameWithoutMdExt))
     .replaceAll('{date}', dayjs().format('YYYY-MM-DD'))
+    .replaceAll('{docHash}', binMd5(parentNameWithoutMdExt).slice(0, 8))
+    .replaceAll('{docPath}', belongDoc.path)
 
-  const path: string = resolve(parentPath, assetsDir, filename)
+  let path: string = resolve(parentPath, assetsDir, filename)
 
   logger.debug('upload', belongDoc, file, path)
 
-  await api.upload(belongDoc.repo, fileBase64Url, path)
+  const res = await api.upload(belongDoc.repo, fileBase64Url, path, ifExists)
+
+  path = res.data.path
 
   if (
     assetsPathType === 'relative' ||
@@ -115,6 +120,10 @@ export async function openExternal (uri: string) {
  * @param path
  */
 export async function openPath (path: string) {
+  if (isWindows) {
+    path = path.replaceAll('/', '\\')
+  }
+
   await api.rpc(`require('electron').shell.openPath(${quote(path)})`)
 }
 
@@ -154,14 +163,10 @@ export async function reloadMainWindow () {
 }
 
 /**
- * get repo by name
- * @param name
+ * Read content from clipboard
+ * @param callback
  * @returns
  */
-export function getRepo (name: string) {
-  return (getSetting('repos') || []).find(x => x.name === name)
-}
-
 export async function readFromClipboard (): Promise<Record<string, any>>
 export async function readFromClipboard (callback: (type: string, getType: (type: string) => Promise<Blob>) => Promise<void>): Promise<void>
 export async function readFromClipboard (callback?: (type: string, getType: (type: string) => Promise<Blob>) => Promise<void>): Promise<void | Record<string, any>> {
@@ -192,6 +197,12 @@ export async function readFromClipboard (callback?: (type: string, getType: (typ
   return result
 }
 
+/**
+ * Write content to clipboard
+ * @param type
+ * @param value
+ * @returns
+ */
 export async function writeToClipboard (type: string, value: any) {
   const result = await navigator.permissions.query({ name: 'clipboard-write' as any })
 
@@ -206,18 +217,17 @@ export async function writeToClipboard (type: string, value: any) {
 }
 
 /**
- * Get Server Timestamp
- * @returns timestamp in ms
- */
-export async function getServerTimestamp () {
-  const date = (await api.proxyRequest('https://www.baidu.com/')).headers.get('x-origin-date')
-  return dayjs(date || undefined).valueOf()
-}
-
-/**
  * Find in current repository.
  * @param query
  */
 export function findInRepository (query?: FindInRepositoryQuery) {
   getActionHandler('base.find-in-repository')(query)
+}
+
+/**
+ * Trigger deep link open
+ * @param url
+ */
+export function triggerDeepLinkOpen (url: string) {
+  return triggerHook('DEEP_LINK_OPEN', { url }, { breakable: true })
 }

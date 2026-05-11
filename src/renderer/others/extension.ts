@@ -9,7 +9,7 @@ import type { Extension, ExtensionCompatible, ExtensionLoadStatus, RegistryHostn
 import * as i18n from '@fe/services/i18n'
 import * as theme from '@fe/services/theme'
 import * as view from '@fe/services/view'
-import { triggerHook } from '@fe/core/hook'
+import { registerHook, triggerHook } from '@fe/core/hook'
 import { FLAG_DEMO } from '@fe/support/args'
 
 const logger = getLogger('extension')
@@ -142,11 +142,11 @@ export async function getRegistryExtensions (registry: RegistryHostname = 'regis
   logger.debug('getRegistryExtensions', registry)
 
   const registryUrl = `https://${registry}/yank-note-registry`
-  const registryJson = await api.proxyRequest(registryUrl, { timeout: 5000 }).then(r => r.json())
+  const registryJson = await api.proxyFetch(registryUrl, { timeout: 5000 }).then(r => r.json())
   const latest = registryJson['dist-tags'].latest
   const tarballUrl = changeRegistryOrigin(registry, registryJson.versions[latest].dist.tarball)
 
-  const extensions = await api.proxyRequest(tarballUrl, { timeout: 5000 })
+  const extensions = await api.proxyFetch(tarballUrl, { timeout: 5000 })
     .then(r => r.arrayBuffer())
     .then(data => pako.inflate(new Uint8Array(data)))
     .then(arr => arr.buffer)
@@ -156,6 +156,20 @@ export async function getRegistryExtensions (registry: RegistryHostname = 'regis
     .then(JSON.parse)
 
   return extensions.map(readInfoFromJson)
+}
+
+export async function getRegistryExtensionVersions (id: string, registry: RegistryHostname = 'registry.npmjs.org'): Promise<Extension[]> {
+  logger.debug('getRegistryExtensionVersions', id, registry)
+
+  const registryUrl = changeRegistryOrigin(registry, `https://registry.npmjs.org/${encodeURIComponent(id)}`)
+  const registryJson = await api.proxyFetch(registryUrl, { timeout: 5000 }).then(r => r.json())
+
+  return Object.values(registryJson.versions || {})
+    .sort((a: any, b: any) => semver.rcompare(a.version, b.version))
+    .slice(0, 15)
+    .map(readInfoFromJson)
+    .filter((item): item is Omit<Extension, 'installed'> => !!item)
+    .map(item => ({ ...item, installed: false }))
 }
 
 export function showManager (id?: string) {
@@ -276,6 +290,18 @@ let initialized = false
 
 export function getInitialized () {
   return initialized
+}
+
+export function whenInitialized (): Promise<void> {
+  return new Promise(resolve => {
+    if (initialized) {
+      resolve()
+    } else {
+      registerHook('EXTENSION_READY', () => {
+        resolve()
+      }, true)
+    }
+  })
 }
 
 /**

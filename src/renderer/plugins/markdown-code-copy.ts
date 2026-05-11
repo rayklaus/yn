@@ -67,13 +67,13 @@ export default {
         height: 100%;
         display: inline-block;
       }
-    `)
+    `, true)
 
     ctx.markdown.registerPlugin(md => {
       const codeInline = (fn: Function) => (tokens: any, idx: any, options: any, env: any, slf: any) => {
         if (tokens[idx].attrIndex('title') < 0) {
           tokens[idx].attrJoin('class', ctx.args.DOM_CLASS_NAME.COPY_INNER_TEXT)
-          tokens[idx].attrPush(['title', ctx.command.getKeyLabel('CtrlCmd') + ' + ' + ctx.i18n.t('click-to-copy')])
+          tokens[idx].attrPush(['title', ctx.keybinding.getKeyLabel('CtrlCmd') + ' + ' + ctx.i18n.t('click-to-copy')])
         }
 
         return (fn)(tokens, idx, options, env, slf)
@@ -93,7 +93,7 @@ export default {
             h('div', { class: 'p-mcc-language' }, token.info),
             h(
               'div',
-              { class: 'p-mcc-copy-btn copy-text', 'data-text': code, title: ctx.i18n.t('copy-code') },
+              { class: 'p-mcc-copy-btn copy-text', 'data-text': code.replace(/\n$/, ''), title: ctx.i18n.t('copy-code') },
               h(SvgIcon, { name: 'clipboard', style: 'pointer-events: none' })
             ),
           ]))

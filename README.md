@@ -1,10 +1,10 @@
 # Yank Note
 
-A **hackable** markdown note application for programmers **[Download](https://github.com/purocean/yn/releases)** | **[Try it Online >>>](https://demo.yank-note.com/)**
+A **highly extensible** Markdown editor, designed for productivity. **[Download](https://github.com/purocean/yn/releases)** | **[Try it Online >>>](https://demo.yank-note.com/)**
 
 [![Download](./help/mas_en.svg?.inline)](https://apps.apple.com/cn/app/yank-note/id1551528618) [Not recommended](https://github.com/purocean/yn/issues/65#issuecomment-1065799677)
 
-English | [中文说明](./README_ZH-CN.md)
+English | [中文说明](./README_ZH-CN.md) | [Русский](./README_RU.md)
 
 [toc]{level: [2]}
 
@@ -12,8 +12,9 @@ English | [中文说明](./README_ZH-CN.md)
 
 ## Highlights
 
+- **AI Assistant:** **Supports AI Copilot for text completion, generation, and image generation (compatible with OpenAI, Ollama, Gemini, Kimi, Tongyi Qianwen, Flux.1, etc.); supports OpenCode AI Agent for intelligent coding assistance.**
 - **Easy to use:** Use *Monaco* kernel, optimize for Markdown editing, and have the same editing experience as VSCode.
-- **Powerful:** Support version control; Applets, runnable code blocks, tables, PlantUML, Drawio, macro replacements, etc., can be embedded in the document; support for [OpenAI](https://openai.com) auto completion.
+- **Powerful:** Support version control; Applets, runnable code blocks, tables, PlantUML, Drawio, macro replacements, etc., can be embedded in the document.
 - **High compatibility:** Data is saved as local Markdown files, and the extension functions are implemented in the original syntax of Markdown as far as possible.
 - **Plug-in extension:** Support users to write their own plug-ins to expand the functionality of the editor.
 - **Encryption supported:** Use encryption to save private files such as account number, and the password can be set separately for each file.
@@ -39,7 +40,7 @@ For more information on how to use the following functions, please see [characte
 - **To-do list:** support to display the to-do progress in the document. Click to quickly switch the to-do status.
 - **Quickly Open:** you can use shortcut key to open the file switch panel to quickly open files, tagged files, and full-text search for file contents.
 - **Integrated terminal:** support to open the terminal in the editor to quickly switch the current working directory
-- **Katex:** support katex expression
+- **LaTeX:** support LaTeX expression
 - **Style:** Markdown uses GitHub styles and features
 - **Repository:** multiple data locations can be defined for document classification
 - **External link conversion:** convert external link or Base64 pictures into local pictures
@@ -51,9 +52,9 @@ For more information on how to use the following functions, please see [characte
 - **Embedded Applets:** document supports embedded HTML Applets
 - **Embed PlantUML graphics:** document supports embedded plantUML graphics
 - **Embed drawio graphics:** document supports embedded drawio graphics
-- **Embed ECharts graphics:** document supports embeded Echarts graphics
-- **Embed Mermaid graphics:** document supports embeded Mermaid graphics
-- **Embed Luckysheet tables:** document supports embeded Luckysheet tables
+- **Embed ECharts graphics:** document supports embedded Echarts graphics
+- **Embed Mermaid graphics:** document supports embedded Mermaid graphics
+- **Embed Luckysheet tables:** document supports embedded Luckysheet tables
 - **Mind map:** nested list can be displayed in the form of a mind map
 - **Element attribute writing:** any attribute of an element can be customized
 - **Table enhancement:** support table title with multiple lines of text, list and other features
@@ -62,7 +63,6 @@ For more information on how to use the following functions, please see [characte
 - **Custom container:** support custom containers similar to VuePress default themes
 - **Macro replacement:** support for embedded JavaScript expressions to dynamically replace document content
 - **Image hosting service:** support [PicGo](https://picgo.github.io/PicGo-Doc/) image hosting service
-- **OpenAI:** support for [OpenAI](https://openai.com) auto completion
 - **Custom plug-ins:** support writing JavaScript plug-ins to expand editor functionality. The plug-in is placed in the `home directory/plugins`. Refer to [plug-in Development Guide](./help/PLUGIN.md)
 
 ## Screenshots
@@ -76,15 +76,40 @@ For more information on how to use the following functions, please see [characte
 
 ## Changelogs
 
-### [v3.46.0](https://github.com/purocean/yn/releases/tag/v3.46.0) 2022-12-07
+### [v3.89.1](https://github.com/purocean/yn/releases/tag/v3.89.1) 2026-05-06
 
-[Windows](https://github.com/purocean/yn/releases/download/v3.46.0/Yank-Note-win-x64-3.46.0.exe) | [macOS arm64](https://github.com/purocean/yn/releases/download/v3.46.0/Yank-Note-mac-arm64-3.46.0.dmg) | [macOS x64](https://github.com/purocean/yn/releases/download/v3.46.0/Yank-Note-mac-x64-3.46.0.dmg) | [Linux AppImage](https://github.com/purocean/yn/releases/download/v3.46.0/Yank-Note-linux-x86_64-3.46.0.AppImage) | [Linux deb](https://github.com/purocean/yn/releases/download/v3.46.0/Yank-Note-linux-amd64-3.46.0.deb)
+[Windows](https://github.com/purocean/yn/releases/download/v3.89.1/Yank-Note-win-x64-3.89.1.exe) | [macOS arm64](https://github.com/purocean/yn/releases/download/v3.89.1/Yank-Note-mac-arm64-3.89.1.dmg) | [macOS x64](https://github.com/purocean/yn/releases/download/v3.89.1/Yank-Note-mac-x64-3.89.1.dmg) | [Linux AppImage](https://github.com/purocean/yn/releases/download/v3.89.1/Yank-Note-linux-x86_64-3.89.1.AppImage) | [Linux deb](https://github.com/purocean/yn/releases/download/v3.89.1/Yank-Note-linux-amd64-3.89.1.deb)
 
-1. feat: Plantuml supports SVG format
-1. feat: optimize interaction and UI
-1. feat(plugin): add `ctx.components.SvgIcon` component
-1. feat(plugin): add `ctx.utils.composable` module
-1. fix: Fix the problem that some anchor points cannot jump when exporting PDF
+1. feat(editor): Add a floating preview editor with drag, resize, preview-click sync, target-line reveal, close controls, and discovery hints
+2. fix(extension): Avoid stale extension files after upgrade
+
+### [v3.88.2](https://github.com/purocean/yn/releases/tag/v3.88.2) 2026-05-01
+
+[Windows](https://github.com/purocean/yn/releases/download/v3.88.2/Yank-Note-win-x64-3.88.2.exe) | [macOS arm64](https://github.com/purocean/yn/releases/download/v3.88.2/Yank-Note-mac-arm64-3.88.2.dmg) | [macOS x64](https://github.com/purocean/yn/releases/download/v3.88.2/Yank-Note-mac-x64-3.88.2.dmg) | [Linux AppImage](https://github.com/purocean/yn/releases/download/v3.88.2/Yank-Note-linux-x86_64-3.88.2.AppImage) | [Linux deb](https://github.com/purocean/yn/releases/download/v3.88.2/Yank-Note-linux-amd64-3.88.2.deb)
+
+1. feat: Add MCP integration, including the local MCP endpoint, settings switch, repository listing, user action execution, Markdown feature documentation, document export, and main window reload
+2. feat: Support `.mdx` and `.markdown` files as Markdown documents, including editor language mode and preview
+3. feat: Improve HTML export with optional code line numbers, copy buttons, and better rendered resource waiting
+4. feat: Support fallback handling for absolute-path image attachments and external image paths
+5. feat: Support localizing `file://` images when converting images to local assets
+6. feat: Show dot files in the repository tree by default
+7. fix: Improve terminal text selection colors in light mode
+8. fix: Fix creating new folders when the requested path ends with a trailing slash
+9. fix: Avoid loading syntax-highlight fonts on unsupported Windows versions
+10. test: Add Markdown feature test documents and Draw.io sample fixtures
+11. chore(deps): Update dependencies including `koa`, `lodash`, `lodash-es`, `node-forge`, `rollup`, `undici`, `uuid`, `yaml`, and security-related transitive packages
+
+### [v3.87.1](https://github.com/purocean/yn/releases/tag/v3.87.1) 2026-01-23
+
+[Windows](https://github.com/purocean/yn/releases/download/v3.87.1/Yank-Note-win-x64-3.87.1.exe) | [macOS arm64](https://github.com/purocean/yn/releases/download/v3.87.1/Yank-Note-mac-arm64-3.87.1.dmg) | [macOS x64](https://github.com/purocean/yn/releases/download/v3.87.1/Yank-Note-mac-x64-3.87.1.dmg) | [Linux AppImage](https://github.com/purocean/yn/releases/download/v3.87.1/Yank-Note-linux-x86_64-3.87.1.AppImage) | [Linux deb](https://github.com/purocean/yn/releases/download/v3.87.1/Yank-Note-linux-amd64-3.87.1.deb)
+
+1. feat: Support displaying OpenCode in the sidebar
+2. feat: Search panel supports remembering expanded results state
+3. feat: Support list collapsing in preview area, needs to be enabled in `Settings - Rendering`
+4. feat: Open external files as read-only by default
+5. feat: Optimize list number auto-fill experience
+6. feat(plugin): Support `ctx.workbench.ContentRightSide.registerPanel` for registering sidebar panel components
+7. feat(plugin): Add `EDITOR_ATTEMPT_READONLY_EDIT` Hook
 
 [More release notes](https://github.com/purocean/yn/releases)
 

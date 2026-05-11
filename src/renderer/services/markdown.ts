@@ -5,7 +5,12 @@ import MarkdownItMark from 'markdown-it-mark'
 import MarkdownItAbbr from 'markdown-it-abbr'
 import MarkdownItAttributes from 'markdown-it-attributes'
 import MarkdownItMultimdTable from 'markdown-it-multimd-table'
-import { registerHook, triggerHook } from '@fe/core/hook'
+import { triggerHook } from '@fe/core/hook'
+import { HELP_REPO_NAME } from '@fe/support/args'
+import type { RenderEnv } from '@fe/types'
+import { getSetting } from './setting'
+import { RULE_NAME as WIKI_LINKS_RULE_NAME } from '@fe/plugins/markdown-wiki-links/lib'
+import { RULE_NAME as HASHTAG_RULE_NAME } from '@fe/plugins/markdown-hashtags/lib'
 
 /**
  * Markdown-it instance
@@ -21,59 +26,25 @@ export function registerPlugin (plugin: (md: Markdown, ...args: any) => void, pa
   markdown.use(plugin, params)
 }
 
-const renderCache: Map<string, Map<string, any>> = new Map()
-
-/**
- * Get render cache
- * @param domain
- * @param key
- * @returns
- */
-export function getRenderCache (domain: string): Map<string, any>
-export function getRenderCache<T> (domain: string, key: string, fallback?: T | (() => T)): T
-export function getRenderCache (domain: string, key?: string, fallback?: any) {
-  if (!domain) {
-    throw new Error('Domain is required')
-  }
-
-  if (!renderCache.has(domain)) {
-    renderCache.set(domain, new Map())
-  }
-
-  const cache = renderCache.get(domain)!
-
-  if (!key) {
-    return cache
-  }
-
-  const value = cache.get(key)
-  if (value) {
-    return value
-  }
-
-  const newValue = typeof fallback === 'function' ? fallback() : fallback
-  cache.set(key, newValue)
-  return newValue
-}
-
-registerHook('VIEW_BEFORE_REFRESH', () => {
-  renderCache.clear()
-})
-
 const render = markdown.render
-markdown.render = (src: string, env?: any) => {
-  triggerHook('MARKDOWN_BEFORE_RENDER', { src, env })
+markdown.render = (src: string, env: RenderEnv) => {
+  triggerHook('MARKDOWN_BEFORE_RENDER', { src, env, md: markdown })
 
-  // build render cache
-  if (env.file) {
-    const cacheKey = `__file_${env.file.repo}:${env.file.path}`
-    if (!renderCache.has(cacheKey)) {
-      renderCache.clear()
-      renderCache.set(cacheKey, new Map())
-    }
-  } else {
-    renderCache.clear()
-  }
+  markdown.options.html = env.file?.repo === HELP_REPO_NAME ? true : getSetting('render.md-html', true)
+  markdown.options.breaks = getSetting('render.md-breaks', true)
+  markdown.options.linkify = getSetting('render.md-linkify', true)
+  markdown.options.typographer = getSetting('render.md-typographer', false)
+
+  const enabledRules: string[] = []
+  const disabledRules: string[] = []
+
+  ;(getSetting('render.md-sup', true) ? enabledRules : disabledRules).push('sup')
+  ;(getSetting('render.md-sub', true) ? enabledRules : disabledRules).push('sub')
+  ;(getSetting('render.md-wiki-links', true) ? enabledRules : disabledRules).push(WIKI_LINKS_RULE_NAME)
+  ;(getSetting('render.md-hash-tags', true) ? enabledRules : disabledRules).push(HASHTAG_RULE_NAME)
+
+  markdown.enable(enabledRules, true)
+  markdown.disable(disabledRules, true)
 
   return render.call(markdown, src, env)
 }
@@ -83,7 +54,12 @@ markdown.use(MarkdownItSup)
 markdown.use(MarkdownItMark)
 markdown.use(MarkdownItAbbr)
 markdown.use(MarkdownItAttributes)
-markdown.use(MarkdownItMultimdTable, { multiline: true })
+markdown.use(MarkdownItMultimdTable, {
+  multiline: getSetting('render.multimd-multiline', true),
+  rowspan: getSetting('render.multimd-rowspan', false),
+  headerless: getSetting('render.multimd-headerless', false),
+  multibody: getSetting('render.multimd-multibody', false),
+})
 
 const tokenize = markdown.block.tokenize
 markdown.block.tokenize = function (state, startLine, endLine) {

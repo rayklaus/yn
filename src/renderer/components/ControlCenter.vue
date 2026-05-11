@@ -1,16 +1,17 @@
 <template>
   <teleport to="body">
-    <div v-if="visible && schema" class="control-center" v-fixed-float="{ onClose: () => toggle(false) }">
+    <div v-if="visible && schema" class="control-center" v-fixed-float="{ onClose: (type: 'blur') => type === 'blur' && toggle(false) }" v-auto-z-index="{ layer: 'popup' }">
       <div v-for="(row, category) in schema" :key="category" class="row">
         <template v-for="(item, i) in row?.items" :key="i">
           <div
-            v-if="item.type === 'btn'"
+            v-if="!item.hidden && item.type === 'btn'"
             :class="{ btn: true, flat: item.flat, disabled: item.disabled, checked: item.checked }"
             :title="item.title"
             @click.stop="item.onClick"
           >
             <svg-icon :name="item.icon" />
           </div>
+          <component v-if="!item.hidden && item.type === 'custom'" :is="item.component" />
         </template>
       </div>
     </div>
@@ -20,7 +21,7 @@
 <script lang="ts" setup>
 import { onBeforeUnmount, ref } from 'vue'
 import { registerAction, removeAction } from '@fe/core/action'
-import { Alt, Escape, getKeysLabel } from '@fe/core/command'
+import { Alt, Escape, getKeysLabel } from '@fe/core/keybinding'
 import { ControlCenter, FileTabs } from '@fe/services/workbench'
 import { t } from '@fe/services/i18n'
 import type { Components } from '@fe/types'
@@ -42,6 +43,10 @@ registerAction({
 
 registerAction({
   name: 'control-center.toggle',
+  description: t('command-desc.control-center_toggle'),
+  forUser: true,
+  forMcp: true,
+  mcpDescription: 'Toggle control center. Args: [visible:boolean?]. No return.',
   handler: toggle,
   keys: [Alt, 'c']
 })
@@ -79,7 +84,6 @@ onBeforeUnmount(() => {
   position: fixed;
   right: 14px;
   top: 36px;
-  z-index: 1000;
   outline: none;
   background: var(--g-color-backdrop);
   backdrop-filter: var(--g-backdrop-filter);

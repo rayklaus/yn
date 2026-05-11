@@ -1,16 +1,29 @@
 import { orderBy, pick } from 'lodash-es'
-import { createStore } from 'vuex'
 import * as storage from '@fe/utils/storage'
-import type { Components, Doc, FileSort, Repo } from '@fe/types'
+import type { Components, Doc, FileSort, IndexStatus, Repo } from '@fe/types'
+import { computed, reactive, watch, watchEffect } from 'vue'
+import { isNormalRepoName } from '@share/misc'
+
+function getCurrentFile () {
+  const data = storage.get<Doc>('currentFile')
+
+  if (data && data.type) {
+    return data
+  }
+
+  return null
+}
 
 export const initState = {
   tree: null as Components.Tree.Node[] | null,
   treeSort: storage.get<FileSort>('treeSort', { by: 'serial', order: 'asc' }),
-  wordWrap: storage.get<'off' | 'on'>('wordWrap', 'off'),
+  wordWrap: storage.get<'off' | 'on'>('wordWrap', 'on'),
   typewriterMode: storage.get<boolean>('typewriterMode', false),
   showSide: storage.get('showSide', true),
   showView: storage.get('showView', true),
   showEditor: storage.get('showEditor', true),
+  showContentRightSide: false,
+  currentRightSidePanel: null as string | null,
   editorPreviewExclusive: storage.get('editorPreviewExclusive', false),
   showXterm: false,
   showOutline: false,
@@ -23,7 +36,8 @@ export const initState = {
   currentContent: '',
   inComposition: false,
   currentRepo: storage.get<Repo>('currentRepo'),
-  currentFile: undefined as Doc | null | undefined,
+  currentRepoIndexStatus: null as { repo: string, status: IndexStatus} | null,
+  currentFile: getCurrentFile() as Doc | null | undefined,
   recentOpenTime: storage.get<Record<string, number>>('recentOpenTime', {}),
   tabs: storage.get<Components.FileTabs.Item[]>('tabs', []),
   previewer: 'default',
@@ -31,111 +45,86 @@ export const initState = {
 }
 
 export type AppState = typeof initState
-export default createStore({
-  state: initState,
-  mutations: {
-    setTree (state, data) {
-      state.tree = data
-    },
-    setTreeSort (state, data) {
-      state.treeSort = data
-      storage.set('treeSort', data)
-    },
-    setWordWrap (state, data: 'off' | 'on') {
-      state.wordWrap = data
-      storage.set('wordWrap', data)
-    },
-    setTypewriterMode (state, data: boolean) {
-      state.typewriterMode = data
-      storage.set('typewriterMode', data)
-    },
-    setShowView (state, data) {
-      state.showView = data
-      storage.set('showView', data)
-    },
-    setShowEditor (state, data) {
-      state.showEditor = data
-      storage.set('showEditor', data)
-    },
-    setEditorPreviewExclusive (state, data) {
-      state.editorPreviewExclusive = data
-      storage.set('editorPreviewExclusive', data)
-    },
-    setShowSide (state, data) {
-      state.showSide = data
-      storage.set('showSide', data)
-    },
-    setShowSetting (state, data) {
-      state.showSetting = data
-    },
-    setShowExport (state, data) {
-      state.showExport = data
-    },
-    setPresentation (state, data) {
-      state.presentation = data
-    },
-    setIsFullscreen (state, data) {
-      state.isFullscreen = data
-    },
-    setSyncScroll (state, data) {
-      state.syncScroll = data
-    },
-    setAutoPreview (state, data) {
-      state.autoPreview = data
-    },
-    setTabs (state, data) {
-      state.tabs = data
-      storage.set('tabs', data)
-    },
-    setShowXterm (state, data) {
-      state.showXterm = data
-    },
-    setPreviewer (state, data: string) {
-      state.previewer = data
-    },
-    setEditor (state, data: string) {
-      state.editor = data
-    },
-    setShowOutline (state, data) {
-      state.showOutline = data
-    },
-    setInComposition (state, data) {
-      state.inComposition = data
-    },
-    setCurrentContent (state, data) {
-      state.currentContent = data
-    },
-    setCurrentRepo (state, data) {
-      state.currentRepo = data
-      state.tree = null
-      storage.set('currentRepo', data)
-    },
-    setCurrentFile (state, data: Doc | null) {
-      state.currentFile = data
 
-      storage.set('currentFile', pick(data, 'repo', 'path', 'type', 'name'))
+const state = reactive(initState)
 
-      if (data) {
-        const record: Record<string, number> = {
-          ...(state.recentOpenTime || {}),
-          [`${data.repo}|${data.path}`]: Date.now()
-        }
-
-        state.recentOpenTime = Object.fromEntries(
-          orderBy(Object.entries(record), x => x[1], 'desc').slice(0, 100)
-        )
-
-        storage.set('recentOpenTime', state.recentOpenTime)
-      }
-    },
-  },
+export default {
+  state,
+  watch,
+  watchEffect,
   getters: {
-    isSaved (state) {
+    isSaved: computed(() => {
       if (!state.currentFile?.status) {
         return true
       }
 
+      if (state.currentFile.status === 'unsaved') {
+        return false
+      }
+
       return state.currentContent === state.currentFile?.content
+    })
+  }
+}
+
+watchEffect(() => {
+  storage.set('treeSort', state.treeSort)
+})
+
+watchEffect(() => {
+  storage.set('wordWrap', state.wordWrap)
+})
+
+watchEffect(() => {
+  storage.set('typewriterMode', state.typewriterMode)
+})
+
+watchEffect(() => {
+  storage.set('showView', state.showView)
+})
+
+watchEffect(() => {
+  storage.set('showEditor', state.showEditor)
+})
+
+watchEffect(() => {
+  storage.set('editorPreviewExclusive', state.editorPreviewExclusive)
+})
+
+watchEffect(() => {
+  storage.set('showSide', state.showSide)
+})
+
+watchEffect(() => {
+  storage.set('tabs', state.tabs)
+})
+
+watchEffect(() => {
+  state.tree = null
+  storage.set('currentRepo', state.currentRepo)
+})
+
+watchEffect(() => {
+  const data = state.currentFile
+
+  storage.set('currentFile', data ? pick(data, 'repo', 'path', 'type', 'name', 'extra') : null)
+
+  if (data && data.type === 'file' && isNormalRepoName(data.repo)) { // record recent open time, except for repo starts with '__'
+    const record: Record<string, number> = {
+      ...(state.recentOpenTime || {}),
+      [`${data.repo}|${data.path}`]: Date.now()
     }
-  },
+
+    state.recentOpenTime = Object.fromEntries(
+      orderBy(Object.entries(record), x => x[1], 'desc').slice(0, 100)
+    )
+  }
+})
+
+watchEffect(() => {
+  storage.set('recentOpenTime', state.recentOpenTime)
+})
+
+watch(() => state.currentRepo, () => {
+  state.currentRepoIndexStatus = null
 })

@@ -15,6 +15,12 @@ define:
 
 ## 应用数据
 
+`<home>` 为当前操作系统的用户主目录，例如：
+
+1. Windows: `C:\Users\<username>`
+1. Linux: `/home/<username>`
+1. macOS: `/Users/<username>`
+
 应用相关的数据目录存放在 `<home>/yank-note` 下面，点击托盘菜单“打开主目录”即可查看
 
 目录说明：
@@ -22,15 +28,16 @@ define:
 1. 配置文件 `<home>/yank-note/config.json`
 1. 导出 docx 参考文档 `<home>/yank-note/pandoc-reference.docx`
 1. 文档历史版本 `<home>/yank-note/histories`
-    ::: tip
-    如果您不小心丢失了您的文档数据，您可以到此文件夹尝试找回。
-    :::
-    ::: danger
-    出于性能的考虑，超过 *102400* 个字符的文档将不会储存历史记录。因此请谨慎在文档中嵌入 Base64 图片。
-    :::
+    > [!TIP]
+    > 如果您不小心丢失了您的文档数据，您可以到此文件夹尝试找回。
+
+    > [!CAUTION]
+    > 出于性能的考虑，超过 *102400* 个字符的文档将不会储存历史记录。因此请谨慎在文档中嵌入 Base64 图片。
+
 1. 插件 `<home>/yank-note/plugins`
 1. 主题 `<home>/yank-note/themes`
 1. 扩展 `<home>/yank-note/extensions`
+1. 其他用户数据 `<home>/yank-note/data`
 
 ## TOC 生成
 
@@ -63,10 +70,31 @@ define:
     *[HTML]: Hyper Text Markup Language
     *[W3C]:  World Wide Web Consortium
     The HTML specification is maintained by the W3C.
++ Wiki 链接：支持使用 `[[文件名#锚点|显示文本]]` 或 `[[文件名:行,列|显示文本]]` 语法来链接文档，如 [[README#Highlights|特色功能]] [[README:3,4]]
++ 标签：#Markdown #使用帮助
+
+## Github Alerts
+
+此功能使用 [markdown-it-github-alerts](https://github.com/antfu/markdown-it-github-alerts) 实现，支持 [Github 风格的警告提示](https://github.com/orgs/community/discussions/16925)。
+
+> [!NOTE] 注意
+突出强调用户在浏览时应该注意的信息。
+
+> [!TIP] 提示
+> 提供可选的信息以帮助用户更加成功。
+
+> [!IMPORTANT] 重要
+> 对于用户成功至关重要的关键信息。
+
+> [!WARNING] 警告
+> 由于潜在风险，需要立即引起用户的注意的关键内容。
+
+> [!CAUTION] 小心
+> 行动的负面潜在后果。
 
 ### 元素属性书写
 
-此功能使用 [markdown-it-attributes](https://github.com/purocean/markdown-it-attributes) 实现
+此功能使用 [markdown-it-attributes](https://github.com/purocean/markdown-it-attributes) 实现。
 
 - 红色文字，白色背景，居中和边框{.bgw .text-center .with-border style="color:red"}
 - 显示为**块元素**{.block}
@@ -182,12 +210,11 @@ journey
 
 ## PlantUML 图形
 
-您可以在“设置”中配置使用本地端点或 PlantUML 在线端点来生成图形。
+您可以在 *<a href="javascript: ctx.setting.showSettingPanel('plantuml-api')">设置</a>* 中配置使用本地端点或 PlantUML 在线端点来生成图形。
 
-::: warning
-如果使用本地端点，则系统需要有 Java 环境，并安装有 Graphviz
+> [!IMPORTANT]
+> 如果使用本地端点，则系统需要有 Java 环境，并安装有 Graphviz
 如果提示 `Cannot find Graphviz`，请参考 [Test your GraphViz installation](https://plantuml.com/graphviz-dot)
-:::
 
 示例如下
 
@@ -200,7 +227,14 @@ a -> b
 此功能使用 [markdown-it-multimd-table](https://github.com/RedBug312/markdown-it-multimd-table) 实现
 支持在表格中使用多行文本和列表。支持表格说明渲染
 
-您可以双击/右键单元格快捷编辑单元格内容
+您可以双击/右键单元格快捷编辑单元格内容，相关快捷键：
+- `DBLClick`: 编辑单元格
+- `Escape`: 退出编辑
+- `Enter`: 确认编辑并编辑下一行
+- `Shift + Enter`: 确认编辑并编辑上一行
+- `Cmd/Ctrl + Shift + Enter`: 确认编辑并插入下一行
+- `Tab`: 确认编辑并编辑下一列
+- `Shift + Tab`: 确认编辑并编辑上一列
 
 First header | Second header
 -------------|---------------
@@ -227,7 +261,7 @@ Test | Test
 | x4 {colspan=2} |
 [合并单元格]
 
-## Katex 公式
+## 数学公式
 
 此功能由 [KaTeX](https://github.com/KaTeX/KaTeX) 提供。
 
@@ -252,11 +286,29 @@ $\nabla \times \vec{\mathbf{B}} -\, \frac1c\, \frac{\partial\vec{\mathbf{E}}}{\p
 此功能执行外部命令实现，所以需要安装相应环境。
 
 代码块第一行需要包含以 `--run--` 字符串，示例如下
+
+Js 代码默认在 Web Worker 中运行，如果需要在主线程中运行，可以在代码块后面加上 `--no-worker--` 参数
+
 ```js
 // --run--
 await new Promise(r => setTimeout(r, 500))
+console.log('HELLOWORLD')
+```
+
+主线程中运行的代码支持使用 `ctx` 对象访问编辑器 API，示例如下
+
+```js
+// --run-- --no-worker--
+await new Promise(r => setTimeout(r, 500))
 ctx.ui.useToast().show("info", "HELLOWORLD!")
 console.log('HELLOWORLD')
+```
+
+如果需要输出 HTML，可以在代码块后面加上 `--output-html--` 参数
+
+```js
+// --run-- --output-html--
+console.log(`output <i>HTML</i>`)
 ```
 
 ```node
@@ -360,14 +412,16 @@ function run (type) {
 <button onclick="ctx.ui.useToast().show(`info`, `HELLOWORLD!`)">HELLO</button>
 ```
 
+你也可以 *<a href="javascript: ctx.showExtensionManager('@yank-note/extension-repl')">安装并启用 Vue Repl 扩展</a>*，使用 Vue SFC 来编写小工具。
+
 ## ECharts 图形
 
 Js 代码块第一行包含以 `--echarts--` 字符串会被解析成 ECharts 图形，示例如下
 
 ```js
 // --echarts--
-function (chart) {
-chart.setOption({
+
+const option = {
     // backgroundColor: '#2c343c',
 
     title: {
@@ -438,8 +492,9 @@ chart.setOption({
             }
         }
     ]
-}, true)
 }
+
+chart.setOption(option, true)
 ```
 
 ## Draw.io 图形
@@ -447,16 +502,6 @@ chart.setOption({
 链接属性 `link-type` 值需要是 `drawio` 字符串。使用链接的形式也不会影响其他 Markdown 解析器解析。
 
 [drawio](./test.drawio){link-type="drawio"}
-
-## Luckysheet 表格
-
-链接属性 `link-type` 值需要是 `luckysheet` 字符串。使用链接的形式也不会影响其他 Markdown 解析器解析。
-
-::: warning
-现阶段 [Luckysheet](https://github.com/mengshukeji/Luckysheet) Bug 较多，使用需谨慎。
-:::
-
-[luckysheet](./test.luckysheet){link-type="luckysheet"}
 
 ## 容器块
 
@@ -472,7 +517,7 @@ chart.setOption({
 
 `type` 是必需的， `title` 和 `content` 是可选的。
 
-支持的 `type` 有：`tip` `warning` `danger` `details` `group` `group-item`
+支持的 `type` 有：tip, warning, danger, details, code-group, group, group-item, row, col, section, div
 
 **示例**
 
@@ -515,6 +560,16 @@ test 3
 :::
 ::::
 
+::: code-group
+```js [test.js]
+let a = 1
+```
+
+```ts [test.ts]
+let a: number = 1
+```
+:::
+
 ::::: row 分列示例
 :::: col TODO
 ::: warning
@@ -549,15 +604,12 @@ test 3
 :::
 ::::
 
-## OpenAI 自动补全
+## AI Copilot 人工智能写作助手
 
-Yank Note 接入了 [OpenAI](https://openai.com)，可以按下 `[= $ctx.command.getKeysLabel('plugin.editor-openai.trigger') =]` 即可实现智能补全（如果选中了文字，则只将选中的文字提交给 AI 计算）。
+Yank Note 接入了 [OpenAI](https://openai.com)、[Google AI](https://ai.google.dev/) 等人工智能平台，可以使用人工智能进行智能补全、文本重写等功能
 
-注：OpenAI API token 需要你自行获取。
-
-> *<a href="javascript: ctx.showExtensionManager('@yank-note/extension-openai')">需要安装并启用 OpenAI 扩展</a>*
-
-<video src="./openai.mp4" height="200" controls></video>
+> [!NOTE]
+> 相关 API token 需要你自行获取。且需要 *<a href="javascript: ctx.showExtensionManager('@yank-note/extension-ai-copilot')">安装并启用 AI Copilot 扩展</a>*
 
 ## Front Matter
 
@@ -571,6 +623,7 @@ Yank Note 接入了 [OpenAI](https://openai.com)，可以按下 `[= $ctx.command
 `wrapCode` | `boolean` | 是否开启代码换行
 `enableMacro` | `boolean` | 是否开启宏替换
 `define` | `Record<string, string>` | 宏定义，定义文本替换
+`tags` | `string[]` | 文档标签
 `defaultPreviewer` | `string` | 文档默认的预览器，某些扩展可能提供特殊的预览界面。如 *<a href="javascript: ctx.showExtensionManager('@yank-note/extension-reveal-js')">Reveal.js 扩展</a>*
 `mdOptions` | `Record<string, boolean>` | Markdown-it 解析参数
 `mdOptions.html` | `boolean` | 开启 HTML 解析
@@ -581,22 +634,23 @@ Yank Note 接入了 [OpenAI](https://openai.com)，可以按下 `[= $ctx.command
 
 ## 宏替换
 
-> *<a href="javascript: ctx.showPremium()">高级版可用</a>*
+> [!NOTE]
+> 此功能 *<a href="javascript: ctx.showPremium()">高级版可用</a>*
 
 Yank Note 允许你在页面中嵌入宏，用以动态地替换文档。
 
-::: tip
-使用前需要先在 Front Matter 开启宏替换，定义 `enableMacro: true`。
-:::
+> [!IMPORTANT]
+> 使用前需要先在 Front Matter 开启宏替换，定义 `enableMacro: true`。
 
-::: warning
-使用宏替换可能会导致源码和预览行号对应不准确，Yank Note 已经尽可能处理，但某些情况可能仍然会出现同步滚动异常。
-:::
-
+> [!WARNING]
+> 使用宏替换可能会导致源码和预览行号对应不准确，Yank Note 已经尽可能处理，但某些情况可能仍然会出现同步滚动异常。
 
 ### 文本替换
 
 Front Matter 中的 `define` 字段可以定义一些文本替换映射。支持在另一个文件定义，支持宏表达式。具体可参考本文件顶部 Front Matter 部分。
+
+> [!TIP]
+> 你还可以在设置中配置 *<a href="javascript: ctx.setting.showSettingPanel('macros')">全局宏替换</a>* ，这样所有文档都可以使用。不过，你仍然需要在 Front Matter 中定义 `enableMacro: true`。
 
 - 应用名: --APP_NAME--
 - 应用版本: --APP_VERSION--
@@ -624,6 +678,7 @@ Front Matter 中的 `define` 字段可以定义一些文本替换映射。支持
 - 应用版本：[= $ctx.version =]
 - 当前文档名: [= $doc.basename =]
 - 当前时间: [= $ctx.lib.dayjs().format('YYYY-MM-DD HH:mm') =]
+- 计数器: [= $seq`图-` =] | [= $seq`图-` =] | [= $seq`图-` =] | [= $seq`表-` =] | [= $seq`表-` =]
 - 限定符转义: [= '[\= =\]' =]
 - 四则运算: [= (1 + 2) / 2 =]
 - 引用文件（支持最多嵌套 3 层，可使用目标文档中定义的 Front Matter 变量)
@@ -662,6 +717,7 @@ Front Matter 中的 `define` 字段可以定义一些文本替换映射。支持
 `$export` | `(key: string, val: any) => Result` | 定义一个本文档可以使用的变量
 `$noop` | `() => Result` | 无操作函数，可用于文本占位使用
 `$afterMacro` | `(fn: (src: string) => string) => Result` | 定义一个宏替换后的回调函数，可用于对替换后的文本进行进一步处理。
+`$seq` | `(label: string) => Result` | 文档内部计数器
 `$doc` | `object` | 当前文档信息
 `$doc.basename` | `string` | 当前文档文件名（无后缀）
 `$doc.name` | `string` | 当前文档文件名
@@ -689,6 +745,12 @@ Front Matter 中的 `define` 字段可以定义一些文本替换映射。支持
 1. 右键点击托盘图标，点击“打开主目录”，进入 `<主目录>/themes` 目录。
 2. 复制 `github.css` 为一个新 CSS 文件，修改 CSS 内容
 3. 打开设置 => 外观 => 自定义 CSS 切换 CSS 配置
+
+## CLI 和 MCP
+
+Yank Note 支持 CLI（命令行接口）和 MCP（模型上下文协议），允许你以编程方式与应用程序进行交互。
+
+更多详情请参考 [CLI 和 MCP](https://help.yank-note.com/cli-mcp.html)。
 
 ## 插件开发
 

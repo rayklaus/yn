@@ -3,8 +3,9 @@ import { protocol, app, Menu, Tray, powerMonitor, dialog, OpenDialogOptions, scr
 import type TBrowserWindow from 'electron'
 import * as path from 'path'
 import * as os from 'os'
+import * as fs from 'fs-extra'
 import * as yargs from 'yargs'
-import server from './server'
+import httpServer, { killPtyProcesses } from './server'
 import store from './storage'
 import { APP_NAME } from './constant'
 import { getTrayMenus, getMainMenus } from './menus'
@@ -12,11 +13,16 @@ import { transformProtocolRequest } from './protocol'
 import startup from './startup'
 import { registerAction } from './action'
 import { registerShortcut } from './shortcut'
+import { initJSONRPCClient, jsonRPCClient } from './jsonrpc'
 import { $t } from './i18n'
-import { getProxyAgent } from './proxy-agent'
+import { getProxyDispatcher, newProxyDispatcher } from './proxy-dispatcher'
 import config from './config'
 import { initProxy } from './proxy'
 import { initEnvs } from './envs'
+import { buildAppUrl } from './url'
+import type { UrlMode } from './url'
+
+app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer')
 
 type WindowState = { maximized: boolean } & Rectangle
 
@@ -29,8 +35,9 @@ const electronRemote = require('@electron/remote/main')
 const isMacos = os.platform() === 'darwin'
 const isLinux = os.platform() === 'linux'
 
-let urlMode: 'scheme' | 'dev' | 'prod' = 'scheme'
+let urlMode: UrlMode = 'scheme'
 let skipBeforeUnloadCheck = false
+let macOpenFilePath = ''
 
 const trayEnabled = !(yargs.argv['disable-tray'])
 const backendPort = Number(yargs.argv.port) || config.get('server.port', 3044)
@@ -54,40 +61,43 @@ let fullscreen = false
 let win: TBrowserWindow.BrowserWindow | null = null
 let tray: Tray | null = null
 
-const getUrl = (mode?: typeof urlMode) => {
-  mode = mode ?? urlMode
+const getOpenFilePathFromArgv = (argv: string[]) => {
+  const filePath = [...argv].reverse().find(x =>
+    x !== process.argv[0] &&
+    !x.startsWith('-') &&
+    !x.endsWith('app.js')
+  )
 
-  const args = Object.entries(yargs.argv).filter(x => [
-    'readonly',
-    'show-status-bar',
-    'init-repo',
-    'init-file',
-  ].includes(x[0]))
+  return filePath ? path.resolve(process.cwd(), filePath) : null
+}
 
-  const searchParams = new URLSearchParams(args as any)
-
-  if (mode === 'scheme') {
-    searchParams.set('port', backendPort.toString())
+const getDeepLinkFromArgv = (argv: string[]) => {
+  const lastArgv = argv[argv.length - 1]
+  if (lastArgv && lastArgv.startsWith(APP_NAME + '://')) {
+    return lastArgv
   }
 
-  const query = searchParams.toString()
+  return null
+}
 
-  const proto = mode === 'scheme' ? APP_NAME : 'http'
-  const port = proto === 'http' ? (mode === 'dev' ? devFrontendPort : backendPort) : ''
-
-  return `${proto}://localhost:${port}` + (query ? `?${query}` : '')
+const getUrl = (mode?: typeof urlMode) => {
+  return buildAppUrl({
+    mode: mode ?? urlMode,
+    backendPort,
+    devFrontendPort,
+  })
 }
 
 const hideWindow = () => {
   if (win) {
     win.hide()
     win.setSkipTaskbar(true)
-    isMacos && app.dock.hide()
+    isMacos && app.dock?.hide()
   }
 }
 
 const restoreWindowBounds = () => {
-  const state: WindowState = store.get('window.state', null)
+  const state: WindowState | null = store.get('window.state', null) as any
   if (state) {
     if (state.maximized) {
       win!.maximize()
@@ -215,7 +225,7 @@ const createWindow = () => {
   win = new BrowserWindow({
     maximizable: true,
     show: false,
-    minWidth: 880,
+    minWidth: 940,
     minHeight: 500,
     frame: false,
     backgroundColor: '#282a2b',
@@ -233,8 +243,27 @@ const createWindow = () => {
   win.setMenu(null)
   win && win.loadURL(getUrl())
   restoreWindowBounds()
+  win.once('ready-to-show', () => {
+    // open file from argv
+    const filePath = macOpenFilePath || getOpenFilePathFromArgv(process.argv)
+    if (filePath) {
+      win?.show()
+      tryOpenFile(filePath)
+      return
+    }
+
+    // reset macOpenFilePath
+    macOpenFilePath = ''
+
+    // hide window on startup
+    if (config.get('hide-main-window-on-startup', false)) {
+      hideWindow()
+    } else {
+      win?.show()
+    }
+  })
+
   win.on('ready-to-show', () => {
-    win!.show()
     skipBeforeUnloadCheck = false
   })
 
@@ -264,11 +293,13 @@ const createWindow = () => {
     fullscreen = false
   })
 
-  win!.webContents.on('will-navigate', (e) => {
+  initJSONRPCClient(win.webContents)
+
+  win.webContents.on('will-navigate', (e) => {
     e.preventDefault()
   })
 
-  win!.webContents.on('will-prevent-unload', (e) => {
+  win.webContents.on('will-prevent-unload', (e) => {
     if (skipBeforeUnloadCheck) {
       e.preventDefault()
     }
@@ -280,7 +311,7 @@ const showWindow = (showInCurrentWindow = true) => {
     const show = () => {
       if (win) {
         // macos need show in dock
-        isMacos && app.dock.show()
+        isMacos && app.dock?.show()
         win.setSkipTaskbar(false)
         win.show()
         win.focus()
@@ -361,18 +392,22 @@ const quit = async () => {
   }
 
   await ensureDocumentSaved()
+  await killPtyProcesses()
 
   win.destroy()
   app.quit()
 }
 
-const showSetting = () => {
+const showSetting = (key?: string) => {
   if (!win || !win.webContents) {
     return
   }
 
   showWindow()
-  win.webContents.executeJavaScript('window.ctx.setting.showSettingPanel();', true)
+  // delay to show setting panel to ensure window is ready.
+  setTimeout(() => {
+    jsonRPCClient.call.ctx.setting.showSettingPanel(key)
+  }, 200)
 }
 
 const toggleFullscreen = () => {
@@ -381,13 +416,39 @@ const toggleFullscreen = () => {
 
 const serve = () => {
   try {
-    const handler = server(backendPort)
+    const { callback: handler, server } = httpServer(backendPort)
+
+    if (server) {
+      server.on('error', (e: Error) => {
+        console.error(e)
+
+        if (e.message.includes('EADDRINUSE') || e.message.includes('EACCES')) {
+          // wait for electron app ready.
+          setTimeout(async () => {
+            await dialog.showMessageBox({
+              type: 'error',
+              title: 'Error',
+              message: $t('app.error.EADDRINUSE', String(backendPort))
+            })
+
+            setTimeout(() => {
+              showSetting('server.port')
+            }, 500)
+          }, 4000)
+          return
+        }
+
+        throw e
+      })
+    }
+
     protocol.registerStreamProtocol('yank-note', async (request, callback) => {
       // transform protocol data to koa request.
       const { req, res, out } = await transformProtocolRequest(request)
       ;(req as any)._protocol = true
 
       await handler(req, res)
+      // eslint-disable-next-line n/no-callback-literal
       callback({
         headers: res.getHeaders() as any,
         statusCode: res.statusCode,
@@ -407,7 +468,8 @@ const showOpenDialog = (params: OpenDialogOptions) => {
 }
 
 const showTray = () => {
-  tray = new Tray(path.join(__dirname, './assets/tray.png'))
+  const img = isMacos ? 'trayTemplate.png' : 'tray.png'
+  tray = new Tray(path.join(__dirname, `./assets/${img}`))
   tray.setToolTip(`${$t('app-name')} - ${$t('slogan')}`)
   if (isMacos) {
     tray.on('click', function (this: Tray) { this.popUpContextMenu() })
@@ -426,6 +488,24 @@ function refreshMenus () {
   }
 }
 
+async function tryOpenFile (path: string) {
+  console.log('tryOpenFile', path)
+  const stat = await fs.stat(path)
+
+  if (stat.isFile()) {
+    jsonRPCClient.call.ctx.doc.switchDocByPath(path)
+    showWindow()
+  } else {
+    win && dialog.showMessageBox(win, { message: 'Yank Note only support open file.' })
+  }
+}
+
+async function tryHandleDeepLink (url: string) {
+  if (url) {
+    jsonRPCClient.call.ctx.base.triggerDeepLinkOpen(url)
+  }
+}
+
 registerAction('show-main-window', showWindow)
 registerAction('hide-main-window', hideWindow)
 registerAction('toggle-fullscreen', toggleFullscreen)
@@ -440,21 +520,53 @@ registerAction('open-in-browser', openInBrowser)
 registerAction('quit', quit)
 registerAction('show-open-dialog', showOpenDialog)
 registerAction('refresh-menus', refreshMenus)
-registerAction('get-proxy-agent', getProxyAgent)
+registerAction('get-proxy-dispatcher', getProxyDispatcher)
+registerAction('new-proxy-dispatcher', newProxyDispatcher)
 
 powerMonitor.on('shutdown', quit)
+
+if (process.defaultApp) {
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(APP_NAME, process.execPath, [path.resolve(process.argv[1])])
+  }
+} else {
+  app.setAsDefaultProtocolClient(APP_NAME)
+}
 
 const gotTheLock = app.requestSingleInstanceLock()
 if (!gotTheLock) {
   app.exit()
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (e, argv) => {
+    console.log('second-instance', argv)
     showWindow()
+
+    const url = getDeepLinkFromArgv(argv)
+    if (url) {
+      tryHandleDeepLink(url)
+      return
+    }
+
+    // only check last param of argv.
+    const path = getOpenFilePathFromArgv([argv[argv.length - 1]])
+    if (path) {
+      tryOpenFile(path)
+    }
   })
 
-  app.on('open-file', (e) => {
-    win && dialog.showMessageBox(win, { message: 'Yank Note dose not support opening files directly.' })
+  app.on('open-file', (e, path) => {
     e.preventDefault()
+
+    if (!win || win.webContents.isLoading()) {
+      macOpenFilePath = path
+    } else {
+      tryOpenFile(path)
+    }
+  })
+
+  app.on('open-url', (e, url) => {
+    e.preventDefault()
+    tryHandleDeepLink(url)
   })
 
   app.on('ready', () => {
@@ -471,20 +583,54 @@ if (!gotTheLock) {
 
     registerShortcut({
       'show-main-window': showWindow,
+      'hide-main-window': hideWindow,
       'open-in-browser': openInBrowser
     })
   })
 
   app.on('activate', () => {
-    if (!win) {
-      showWindow(false)
-    }
+    showWindow(false)
   })
 
   app.on('web-contents-created', (_, webContents) => {
     electronRemote.enable(webContents)
 
-    webContents.setWindowOpenHandler(({ url }) => {
+    // fix focus issue after dialog show on Windows.
+    webContents.on('frame-created', (_, { frame }) => {
+      if (!frame) {
+        return
+      }
+
+      frame.on('dom-ready', () => {
+        frame.executeJavaScript(`if ('ctx' in window && ctx?.env?.isWindows) {
+          window._FIX_ELECTRON_DIALOG_FOCUS ??= function () {
+            setTimeout(() => {
+              ctx.env.getElectronRemote().getCurrentWindow().blur();
+              ctx.env.getElectronRemote().getCurrentWindow().focus();
+            }, 0);
+          };
+
+          if (!window._ORIGIN_ALERT) {
+            window._ORIGIN_ALERT = window.alert;
+            window.alert = function (...args) {
+              window._ORIGIN_ALERT(...args);
+              window._FIX_ELECTRON_DIALOG_FOCUS();
+            };
+          }
+
+          if (!window._ORIGIN_CONFIRM) {
+            window._ORIGIN_CONFIRM = window.confirm;
+            window.confirm = function (...args) {
+              const res = window._ORIGIN_CONFIRM(...args);
+              window._FIX_ELECTRON_DIALOG_FOCUS();
+              return res;
+            };
+          }
+        }`)
+      })
+    })
+
+    webContents.setWindowOpenHandler(({ url, features }) => {
       if (url.includes('__allow-open-window__')) {
         return { action: 'allow' }
       }
@@ -502,7 +648,28 @@ if (!gotTheLock) {
         return { action: 'deny' }
       }
 
-      return { action: 'allow' }
+      const webPreferences: Record<string, boolean | string> = {}
+
+      // electron not auto parse features below. https://www.electronjs.org/docs/latest/api/window-open
+      const extraFeatureKeys = [
+        'experimentalFeatures',
+        'nodeIntegrationInSubFrames',
+        'webSecurity',
+      ]
+
+      extraFeatureKeys.forEach(key => {
+        const match = features.match(new RegExp(`${key}=([^,]+)`))
+        if (match) {
+          webPreferences[key] = match[1] === 'true' ? true : match[1] === 'false' ? false : match[1]
+        }
+      })
+
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          webPreferences: Object.keys(webPreferences).length > 0 ? webPreferences : undefined,
+        }
+      }
     })
   })
 }

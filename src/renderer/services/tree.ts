@@ -1,9 +1,11 @@
-import { nextTick, Ref } from 'vue'
+import { markRaw, nextTick, Ref } from 'vue'
 import type { Components } from '@fe/types'
 import { getActionHandler, registerAction } from '@fe/core/action'
+import * as ioc from '@fe/core/ioc'
 import store from '@fe/support/store'
 import { useToast } from '@fe/support/ui/toast'
 import * as api from '@fe/support/api'
+import { t } from './i18n'
 
 export type MenuItem = Components.ContextMenu.Item
 export type VueCtx = { localMarked: Ref<boolean | null> }
@@ -36,6 +38,31 @@ export function getContextMenuItems (node: Components.Tree.Node, vueCtx: VueCtx)
 }
 
 /**
+ * Add a node action buttons processor.
+ * @param fun
+ */
+export function tapNodeActionButtons (fun: (
+  btns: Components.Tree.NodeActionBtn[],
+  currentNode: Components.Tree.Node,
+) => void) {
+  ioc.register('TREE_NODE_ACTION_BTN_TAPPERS', fun)
+}
+
+/**
+ * Get node action buttons.
+ */
+export function getNodeActionButtons (currentNode: Components.Tree.Node) {
+  const btns: Components.Tree.NodeActionBtn[] = []
+
+  const tappers = ioc.get('TREE_NODE_ACTION_BTN_TAPPERS')
+  tappers.forEach((tapper) => {
+    tapper(btns, currentNode)
+  })
+
+  return btns
+}
+
+/**
  * Refresh file tree.
  */
 export async function refreshTree () {
@@ -52,7 +79,7 @@ export async function refreshTree () {
       tree[0].name = repo.name
     }
 
-    store.commit('setTree', tree)
+    store.state.tree = markRaw(tree)
   } catch (error: any) {
     useToast().show('warning', error.message)
   }
@@ -65,9 +92,16 @@ export function revealCurrentNode () {
   getActionHandler('tree.reveal-current-node')()
 }
 
-store.watch(state => state.treeSort, async () => {
+store.watch(() => store.state.treeSort, async () => {
   await refreshTree()
   await nextTick()
   revealCurrentNode()
 })
-registerAction({ name: 'tree.refresh', handler: refreshTree })
+registerAction({
+  name: 'tree.refresh',
+  description: t('command-desc.tree_refresh'),
+  mcpDescription: 'Refresh file tree. No args. No return.',
+  forUser: true,
+  forMcp: true,
+  handler: refreshTree,
+})

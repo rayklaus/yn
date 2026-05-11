@@ -17,11 +17,11 @@
         </div>
       </template>
     </div>
-    <div class="title">{{$t(showOutline ? 'outline' : 'files')}}</div>
+    <div class="title" @dblclick="onDblClickTitle">{{$t(showOutline ? 'outline' : 'files')}}</div>
     <div class="btns" v-if="navigation">
       <div v-for="(item, i) in navigation.items" :key="i">
         <div
-          v-if="item.showInActionBar && item.type === 'btn'"
+          v-if="item.type === 'btn' && item.showInActionBar"
           :class="{ btn: true, flat: item.flat, disabled: item.disabled, checked: item.checked }"
           :title="item.title"
           @click.stop="item.onClick"
@@ -35,18 +35,17 @@
 
 <script lang="ts" setup>
 import { onBeforeUnmount, ref, toRef } from 'vue'
-import { useStore } from 'vuex'
-import { registerAction, removeAction } from '@fe/core/action'
+import { getActionHandler, registerAction, removeAction } from '@fe/core/action'
 import { useContextMenu } from '@fe/support/ui/context-menu'
-import type { AppState } from '@fe/support/store'
 import { useI18n } from '@fe/services/i18n'
 import { toggleOutline, ControlCenter } from '@fe/services/workbench'
 import { findInRepository } from '@fe/services/base'
-import { getKeysLabel } from '@fe/core/command'
+import { getKeysLabel } from '@fe/core/keybinding'
+import { registerHook, removeHook } from '@fe/core/hook'
+import store from '@fe/support/store'
 import type { FileSort, Components } from '@fe/types'
 import SvgIcon from './SvgIcon.vue'
 
-const store = useStore<AppState>()
 const navigation = ref<Components.ControlCenter.Schema['navigation']>()
 const showOutline = toRef(store.state, 'showOutline')
 const treeSort = toRef(store.state, 'treeSort')
@@ -62,7 +61,7 @@ function showSortMenu () {
       label: t(('tree.sort.by-' + by) as any, t(('tree.sort.' + order) as any)),
       checked: sort.by === by && sort.order === order,
       onClick: () => {
-        store.commit('setTreeSort', { by, order })
+        store.state.treeSort = { by, order }
       },
     }
   }
@@ -82,15 +81,23 @@ function showSortMenu () {
   ], { mouseX: x => x - 20, mouseY: y => y + 16 })
 }
 
-registerAction({
-  name: 'action-bar.refresh',
-  handler () {
-    navigation.value = ControlCenter.getSchema().navigation
+function refresh () {
+  navigation.value = ControlCenter.getSchema().navigation
+}
+
+function onDblClickTitle () {
+  if (!showOutline.value) {
+    // reveal current file
+    getActionHandler('tree.reveal-current-node')()
   }
-})
+}
+
+registerAction({ name: 'action-bar.refresh', handler: refresh })
+registerHook('COMMAND_KEYBINDING_CHANGED', refresh)
 
 onBeforeUnmount(() => {
   removeAction('action-bar.refresh')
+  removeHook('COMMAND_KEYBINDING_CHANGED', refresh)
 })
 </script>
 

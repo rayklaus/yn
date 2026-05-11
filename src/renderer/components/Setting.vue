@@ -4,26 +4,28 @@
     <group-tabs :tabs="tabs" v-model="tab" />
     <div v-show="isReady" ref="refEditor" class="editor" @click="onClick" />
     <div class="action">
-      <button class="btn tr" @click="cancel">{{$t('cancel')}}</button>
+      <a href="javascript:void(0)" @click="showKeyboardShortcuts">{{ $t('setting-panel.change-keyboard-shortcuts') }}</a>
+      <button class="btn tr" @click="close">{{$t('cancel')}}</button>
       <button class="btn primary tr" @click="ok">{{$t('ok')}}</button>
     </div>
   </div>
 </template>
 
 <script lang="ts">
-import { useStore } from 'vuex'
-import { computed, defineComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { debounce } from 'lodash-es'
+import { computed, defineComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { JSONEditor } from '@json-editor/json-editor'
 import * as api from '@fe/support/api'
 import { useToast } from '@fe/support/ui/toast'
-import { getThemeName, setTheme } from '@fe/services/theme'
 import { useI18n } from '@fe/services/i18n'
-import { fetchSettings, getSchema, writeSettings } from '@fe/services/setting'
+import { fetchSettings, getSchema, showSettingPanel, writeSettings } from '@fe/services/setting'
 import { registerHook, removeHook, triggerHook } from '@fe/core/hook'
 import { basename } from '@fe/utils/path'
-import { getPurchased, showPremium } from '@fe/others/premium'
+import { getActionHandler } from '@fe/core/action'
+import { useModal } from '@fe/support/ui/modal'
+import store from '@fe/support/store'
 import GroupTabs from '@fe/components/GroupTabs.vue'
-import { BuildInSettings, SettingGroup } from '@fe/types'
+import type { BuildInSettings, Repo, SettingGroup, SettingSchema } from '@fe/types'
 
 JSONEditor.defaults.language = 'en'
 
@@ -31,7 +33,6 @@ export default defineComponent({
   name: 'x-filter',
   components: { GroupTabs },
   setup (_, { emit }) {
-    const store = useStore()
     const { t } = useI18n()
     const toast = useToast()
     const refEditor = ref<HTMLElement>()
@@ -42,6 +43,7 @@ export default defineComponent({
     const show = computed(() => store.state.showSetting)
 
     let editor: any = null
+    let schemaCache: SettingSchema | null = null
 
     function setLanguage () {
       JSONEditor.defaults.languages.en.button_move_down_title = '⬇'
@@ -51,10 +53,101 @@ export default defineComponent({
       JSONEditor.defaults.languages.en.button_delete_node_warning = t('setting-panel.delete-warning')
     }
 
+    function getSchemaWithCache () {
+      if (!schemaCache) {
+        schemaCache = getSchema()
+      }
+
+      return schemaCache
+    }
+
+    function initResetButtons () {
+      // remove all reset buttons
+      refEditor.value?.querySelectorAll('.reset-button').forEach(el => el.remove())
+
+      const types = ['string', 'number', 'boolean']
+
+      const selectors = types
+        .map(type => `.row > div[data-schematype="${type}"]`)
+        .join(',')
+
+      refEditor.value?.querySelectorAll<HTMLElement>(selectors).forEach(el => {
+        const type = el.getAttribute('data-schematype')
+
+        const label = type !== 'boolean' ? el.querySelector('.je-form-input-label') : el.querySelector('.form-control')
+        if (!label) return
+
+        const editorSchemaPath = el.getAttribute('data-schemapath') || ''
+        const schemaPath = editorSchemaPath.replace('root.', '')
+
+        const schema = getSchemaWithCache()
+        const schemaItem = schema.properties[schemaPath as keyof BuildInSettings]
+        const value = editor.getEditor(editorSchemaPath).getValue()
+
+        if (
+          types.includes(typeof schemaItem?.defaultValue) &&
+          schemaItem?.defaultValue !== value
+        ) {
+          const resetBtn = document.createElement('div')
+          resetBtn.innerHTML = '<svg aria-hidden="true" focusable="false" data-prefix="fas" data-icon="sync-alt"  role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path fill="currentColor" d="M370.72 133.28C339.458 104.008 298.888 87.962 255.848 88c-77.458.068-144.328 53.178-162.791 126.85-1.344 5.363-6.122 9.15-11.651 9.15H24.103c-7.498 0-13.194-6.807-11.807-14.176C33.933 94.924 134.813 8 256 8c66.448 0 126.791 26.136 171.315 68.685L463.03 40.97C478.149 25.851 504 36.559 504 57.941V192c0 13.255-10.745 24-24 24H345.941c-21.382 0-32.09-25.851-16.971-40.971l41.75-41.749zM32 296h134.059c21.382 0 32.09 25.851 16.971 40.971l-41.75 41.75c31.262 29.273 71.835 45.319 114.876 45.28 77.418-.07 144.315-53.144 162.787-126.849 1.344-5.363 6.122-9.15 11.651-9.15h57.304c7.498 0 13.194 6.807 11.807 14.176C478.067 417.076 377.187 504 256 504c-66.448 0-126.791-26.136-171.315-68.685L48.97 471.03C33.851 486.149 8 475.441 8 454.059V320c0-13.255 10.745-24 24-24z"></path></svg>'
+          resetBtn.title = t('setting-panel.reset-title', String(schemaItem.defaultValue))
+          resetBtn.className = 'reset-button'
+          resetBtn.onclick = () => {
+            useModal().confirm({
+              title: t('setting-panel.reset-confirm-title'),
+              content: t('setting-panel.reset-confirm-desc', String(schemaItem.defaultValue)),
+            }).then(ok => {
+              if (ok) {
+                editor.getEditor(editorSchemaPath).setValue(schemaItem.defaultValue)
+              }
+            })
+          }
+
+          label.prepend(resetBtn)
+        }
+      })
+    }
+
+    function initInputSuggestions (editor: any, schema: SettingSchema) {
+      Object.keys(schema.properties).forEach((key) => {
+        const field = editor.getEditor(`root.${key}`)
+        if (field && field.schema.suggestions && field.schema.suggestions.length > 0) {
+          const input = field.input as HTMLInputElement
+
+          input.addEventListener('focus', () => {
+            const div = document.createElement('ul')
+            div.className = 'suggestions-datalist'
+            div.style.left = `${input.offsetLeft}px`
+            div.style.top = `${input.offsetTop + input.offsetHeight}px`
+            div.style.width = `${input.offsetWidth - 2}px`
+            field.schema.suggestions.forEach((item: { label: string; value: string } | string) => {
+              const li = document.createElement('li')
+              const label = typeof item === 'string' ? item : item.label
+              const value = typeof item === 'string' ? item : item.value
+              li.textContent = label
+              li.title = value
+              li.onclick = () => {
+                field.setValue(value)
+              }
+              div.appendChild(li)
+            })
+            input.parentElement?.appendChild(div)
+
+            input.addEventListener('blur', () => {
+              setTimeout(() => { div.remove() }, 100)
+            }, { once: true })
+          })
+        }
+      })
+    }
+
+    const initResetButtonsDebounced = debounce(initResetButtons, 100)
+
     onMounted(async () => {
       await triggerHook('SETTING_PANEL_BEFORE_SHOW', {}, { breakable: true })
 
-      const schema: any = getSchema()
+      const schema = getSchemaWithCache()
+
       tabs.value = schema.groups
 
       // begin: hack to use DOMPurify, support html
@@ -67,7 +160,7 @@ export default defineComponent({
         disable_array_delete_last_row: true,
         disable_array_delete_all_rows: true,
         remove_button_labels: true,
-        schema,
+        schema: schemaCache,
         custom_validators: [(schema: any, value: any, path: any) => {
           if (schema.validator && typeof schema.validator === 'function') {
             return schema.validator(schema, value, path)
@@ -79,23 +172,19 @@ export default defineComponent({
       // end: hack to use DOMPurify
       delete (window as any).DOMPurify
 
-      editor.watch('root.theme', () => {
-        const theme = editor.getEditor('root.theme').getValue()
-        if (getThemeName() !== theme) {
-          if (getPurchased()) {
-            setTheme(theme)
-          } else {
-            cancel()
-            toast.show('warning', t('premium.need-purchase', 'Theme'))
-            showPremium()
-          }
-        }
-      })
+      editor.on('change', initResetButtonsDebounced)
+
+      const reposEditor = editor.getEditor('root.repos')
+
+      reposEditor.addRow = function (val: any) {
+        val ??= { name: '', path: '', enableIndexing: false } satisfies Repo
+        this.constructor.prototype.addRow.call(this, val)
+      }
 
       const data = await fetchSettings()
 
       if (data.repos.length < 1) {
-        data.repos = [{ name: '', path: '' }]
+        data.repos = [{ name: '', path: '', enableIndexing: false }] satisfies Repo[]
       }
 
       const value: any = {}
@@ -106,16 +195,25 @@ export default defineComponent({
 
       editor.setValue(value)
       updateTab()
+      initResetButtonsDebounced()
       isReady.value = true
+
+      nextTick(() => {
+        initInputSuggestions(editor, schema)
+      })
+
+      triggerHook('SETTING_PANEL_AFTER_SHOW', { editor })
     })
 
     setLanguage()
     registerHook('I18N_CHANGE_LANGUAGE', setLanguage)
     onBeforeUnmount(() => {
+      editor?.destroy()
       removeHook('I18N_CHANGE_LANGUAGE', setLanguage)
     })
 
-    const cancel = () => {
+    const close = async () => {
+      await triggerHook('SETTING_PANEL_BEFORE_CLOSE', { editor }, { breakable: true })
       emit('close')
     }
 
@@ -141,6 +239,12 @@ export default defineComponent({
         if (errors.length) {
           console.log('json-editor', errors)
           errors.forEach((error: any) => {
+            const path = error.path
+            if (path) {
+              // highlight field
+              showSettingPanel(path.replace(/^root\./, ''))
+            }
+
             toast.show('warning', error.message)
             throw new Error(error.message)
           })
@@ -148,26 +252,27 @@ export default defineComponent({
 
         await writeSettings({ ...value })
       }
-      emit('close')
+      close()
     }
 
     const onClick = async (e: Event) => {
       const target = e.target as HTMLInputElement
-      if (target.name && target.name.endsWith('[path]')) {
+      if (target.tagName === 'INPUT' && target.name) {
         const jsonPath = target.name.replace(/\]/g, '').replace(/\[/g, '.')
         const field = editor.getEditor(jsonPath)
-        const { canceled, filePaths } = await api.choosePath({
-          properties: ['openDirectory', 'createDirectory'],
-        })
 
-        if (!canceled && filePaths[0]) {
-          field.setValue(filePaths[0])
+        if (field && field.schema.openDialogOptions) {
+          const { canceled, filePaths } = await api.choosePath(field.schema.openDialogOptions)
+
+          if (!canceled && filePaths[0]) {
+            field.setValue(filePaths[0])
+          }
         }
       }
     }
 
     function updateTab () {
-      const schema = getSchema()
+      const schema = getSchemaWithCache()
 
       const getPaths = (group: SettingGroup) => Object.keys(schema.properties as any)
         .filter(key => {
@@ -191,16 +296,21 @@ export default defineComponent({
       })
     }
 
+    function showKeyboardShortcuts () {
+      close()
+      getActionHandler('keyboard-shortcuts.show-manager')()
+    }
+
     watch(tab, updateTab)
 
-    return { isReady, tab, tabs, show, refEditor, cancel, ok, onClick }
+    return { isReady, tab, tabs, show, refEditor, close, ok, onClick, showKeyboardShortcuts }
   },
 })
 </script>
 
 <style lang="scss" scoped>
 .editor-wrapper {
-  width: 700px;
+  width: 920px;
   background: var(--g-color-backdrop);
   backdrop-filter: var(--g-backdrop-filter);
   margin: auto;
@@ -249,16 +359,48 @@ export default defineComponent({
     position: relative;
   }
 
+  ::v-deep(.row > div > .form-control) {
+    padding-left: 20px;
+  }
+
   ::v-deep(.je-form-input-label) {
-    width: 100px;
+    width: 140px;
     display: inline-flex;
     align-items: center;
     flex: none;
     padding-right: 14px;
+    font-size: 15px;
   }
 
   ::v-deep(.je-form-input-label + input) {
-    max-width: calc(100% - 120px);
+    max-width: calc(100% - 180px);
+  }
+
+  ::v-deep(.reset-button) {
+    width: 20px;
+    height: 20px;
+    box-sizing: border-box;
+    position: absolute;
+    left: -5px;
+    opacity: 0.6;
+    transition: opacity 0.1s;
+    z-index: 1;
+    border-radius: 50%;
+    padding: 5px;
+    color: var(--g-color-30);
+
+    svg {
+      display: block;
+    }
+
+    &:hover {
+      background: var(--g-color-80);
+      color: var(--g-color-10);
+    }
+  }
+
+  ::v-deep(.je-form-input-label:hover > .reset-button) {
+    opacity: 1;
   }
 
   ::v-deep(.je-form-input-label ~ .je-form-input-label) {
@@ -269,6 +411,17 @@ export default defineComponent({
     margin-top: 4px;
     text-align: right;
     display: block;
+  }
+
+  ::v-deep(.je-form-input-label + input[type=number]) {
+    max-width: 130px;
+  }
+
+  ::v-deep(input[type=number] ~ .je-form-input-label) {
+    width: auto;
+    display: flex;
+    align-items: center;
+    margin-left: 8px;
   }
 
   ::v-deep(.form-control .errmsg) {
@@ -290,8 +443,24 @@ export default defineComponent({
       width: 100px;
     }
 
+    tr > th:nth-child(3),
+    tr > td:nth-child(3) {
+      width: 55px;
+      font-size: 12px;
+      text-align: center;
+
+      & > .form-control {
+        display: inline-block;
+
+        & > input[type=checkbox] {
+          margin-right: 0;
+        }
+      }
+    }
+
     tr > td:last-child {
       width: 120px;
+      text-align: left !important;
     }
   }
 
@@ -306,7 +475,31 @@ export default defineComponent({
   }
 
   ::v-deep(a) {
-    color: var(-g-color-anchor);
+    color: var(--g-color-anchor);
+  }
+
+  ::v-deep(input ~ .suggestions-datalist) {
+    position: absolute;
+    z-index: 1000;
+    background-color: var(--g-color-backdrop);
+    backdrop-filter: var(--g-backdrop-filter);
+    border: 1px solid var(--g-color-84);
+    border-radius: var(--g-border-radius);
+    box-shadow: rgba(0, 0, 0, 0.2) 2px 2px 5px;
+    list-style: none;
+    padding: 4px 0;
+    margin: 0;
+
+    li {
+      padding: 5px 10px;
+      cursor: pointer;
+      font-size: 12px;
+
+      &:hover {
+        background-color: var(--g-color-80);
+        color: var(--g-color-10);
+      }
+    }
   }
 }
 
@@ -314,5 +507,11 @@ export default defineComponent({
   display: flex;
   justify-content: flex-end;
   padding-top: 10px;
+
+  a {
+    font-size: 14px;
+    margin-right: auto;
+    align-self: center;
+  }
 }
 </style>

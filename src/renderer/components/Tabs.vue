@@ -11,7 +11,7 @@
         v-for="item in tabList"
         :key="item.key"
         :data-id="item.key"
-        :class="{tab: true, current: item.key === value, fixed: item.fixed, temporary: item.temporary}"
+        :class="{tab: true, current: item.key === value, fixed: item.fixed, temporary: item.temporary, [item.class || '']: true}"
         :title="item.description"
         :data-key="item.key"
         @contextmenu.exact.prevent.stop="showContextMenu(item)"
@@ -27,12 +27,12 @@
         </div>
       </div>
     </div>
-    <div ref="refFilterBtn" class="action-btn" @click="showQuickFilter" :title="filterBtnTitle">
+    <div ref="refFilterBtn" class="action-btn" style="order: -512" @click="showQuickFilter" :title="filterBtnTitle">
       <svg-icon name="chevron-down" width="12px" />
     </div>
     <template v-for="(btn, i) in [...actionBtns].filter(x => !x.hidden).sort((a: any, b: any) => ((a.order || 0) - (b.order || 0)))">
       <div  v-if="btn.type === 'separator'" class="action-btn-separator" :key="i" />
-      <div v-else-if="btn.type === 'normal'" :key="btn.key || `${i}`" class="action-btn" @click="btn.onClick" :title="btn.title">
+      <div v-else-if="btn.type === 'normal'" :key="btn.key || `${i}`" class="action-btn" @click="btn.onClick" :title="btn.title" :style="btn.style">
         <svg-icon :name="btn.icon" width="12px" />
       </div>
       <component v-else-if="btn.type === 'custom'" :key="btn.key || `custom-${i}`" :is="btn.component" />
@@ -65,6 +65,10 @@ export default defineComponent({
       type: Array as () => Components.Tabs.ActionBtn[],
       default: () => [],
     },
+    hookContextMenu: {
+      type: Function as unknown as () => ((item: Components.Tabs.Item, menus: Components.ContextMenu.Item[]) => void),
+      default: () => undefined,
+    }
   },
   emits: ['input', 'remove', 'switch', 'change-list', 'dblclick-blank', 'dblclick-item'],
   setup (props, { emit }) {
@@ -159,7 +163,7 @@ export default defineComponent({
     }
 
     function showContextMenu (item: Components.Tabs.Item) {
-      contextMenu.show([
+      const items: Components.ContextMenu.Item[] = [
         { id: 'close', label: t('close'), onClick: () => removeTabs([item]) },
         { id: 'close-others', label: t('tabs.close-others'), onClick: () => removeOther(item) },
         { id: 'close-right', label: t('tabs.close-right'), onClick: () => removeRight(item) },
@@ -167,7 +171,11 @@ export default defineComponent({
         { id: 'close-all', label: t('tabs.close-all'), onClick: () => removeAll() },
         { type: 'separator' },
         { id: 'fix', label: item.fixed ? t('tabs.unpin') : t('tabs.pin'), onClick: () => toggleFix(item) },
-      ])
+      ]
+
+      props.hookContextMenu?.(item, items)
+
+      contextMenu.show(items)
     }
 
     function showQuickFilter () {
@@ -307,6 +315,7 @@ export default defineComponent({
   width: 100%;
   overflow-x: hidden;
   overflow-y: hidden;
+  order: -1024;
 
   &::before,
   &::after {

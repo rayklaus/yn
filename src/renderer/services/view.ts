@@ -1,5 +1,5 @@
 import juice from 'juice'
-import { CtrlCmd, Escape, registerCommand } from '@fe/core/command'
+import { Escape } from '@fe/core/keybinding'
 import { getActionHandler, registerAction } from '@fe/core/action'
 import { registerHook, triggerHook } from '@fe/core/hook'
 import * as ioc from '@fe/core/ioc'
@@ -10,7 +10,7 @@ import { sleep } from '@fe/utils'
 import type { BuildInHookTypes, Components, Previewer } from '@fe/types'
 import { t } from './i18n'
 import { emitResize } from './layout'
-import { isSameFile, switchDoc } from './document'
+import { isSameFile } from './document'
 
 export type MenuItem = Components.ContextMenu.Item
 export type BuildContextMenu = (items: MenuItem[], e: MouseEvent) => void
@@ -18,6 +18,7 @@ export type Heading = {
   tag: string;
   class: string;
   text: string;
+  id: string;
   level: number;
   sourceLine: number;
   activated?: boolean;
@@ -33,10 +34,25 @@ function present (flag: boolean) {
   if (flag) {
     useToast().show('info', t('exit-presentation-msg'))
   }
-  store.commit('setPresentation', flag)
+  store.state.presentation = flag
   setTimeout(() => {
     emitResize()
   }, 0)
+}
+
+async function getElement (id: string) {
+  id = id.replaceAll('%28', '(').replaceAll('%29', ')')
+
+  const document = (await getRenderIframe()).contentDocument!
+
+  const _find = (id: string) => document.getElementById(id) ||
+    document.getElementById(decodeURIComponent(id)) ||
+    document.getElementById(encodeURIComponent(id)) ||
+    document.getElementById(id.replace(/^h-/, '')) ||
+    document.getElementById(decodeURIComponent(id.replace(/^h-/, ''))) ||
+    document.getElementById(encodeURIComponent(id.replace(/^h-/, '')))
+
+  return _find(id) || _find(id.toUpperCase())
 }
 
 /**
@@ -57,11 +73,6 @@ export function renderImmediately () {
  * Refresh view.
  */
 export async function refresh () {
-  if (store.state.currentFile) {
-    const { type, name, path, repo } = store.state.currentFile
-    await switchDoc({ type, name, path, repo }, true)
-  }
-
   getActionHandler('view.refresh')()
 }
 
@@ -94,9 +105,46 @@ export async function highlightLine (line: number, reveal: boolean, duration = 1
 
   if (el) {
     el.classList.add(DOM_CLASS_NAME.PREVIEW_HIGHLIGHT)
-    await sleep(duration)
-    el.classList.remove(DOM_CLASS_NAME.PREVIEW_HIGHLIGHT)
+    if (duration) {
+      sleep(duration).then(() => {
+        el!.classList.remove(DOM_CLASS_NAME.PREVIEW_HIGHLIGHT)
+      })
+    }
   }
+
+  return el
+}
+
+/**
+ * Highlight anchor.
+ * @param anchor
+ * @param reveal
+ * @param duration
+ */
+export async function highlightAnchor (anchor: string, reveal: boolean, duration = 1000) {
+  const el = await getElement(anchor)
+  if (!el) {
+    return null
+  }
+
+  if (reveal) {
+    el.scrollIntoView()
+
+    // retain 60 px for better view.
+    const contentWindow = (await getRenderIframe()).contentWindow!
+    contentWindow.scrollBy(0, -60)
+  }
+
+  // highlight element
+  el.classList.add(DOM_CLASS_NAME.PREVIEW_HIGHLIGHT)
+
+  if (duration) {
+    sleep(duration).then(() => {
+      el.classList.remove(DOM_CLASS_NAME.PREVIEW_HIGHLIGHT)
+    })
+  }
+
+  return el
 }
 
 /**
@@ -108,19 +156,35 @@ export async function scrollTopTo (top: number) {
   iframe.contentWindow?.scrollTo(0, top)
 }
 
+export function getScrollTop () {
+  if (renderIframe) {
+    return renderIframe.contentWindow?.scrollY
+  }
+}
+
 export function getPreviewStyles () {
   let styles = `article.${DOM_CLASS_NAME.PREVIEW_MARKDOWN_BODY} { max-width: 1024px; margin: 20px auto; }`
-  Array.prototype.forEach.call(renderIframe.contentDocument!.styleSheets, item => {
-    // inject global styles, normalize.css
-    const flag = item.cssRules[0] &&
-      item.cssRules[0].selectorText === 'html' &&
-      item.cssRules[0].cssText === 'html { line-height: 1.15; text-size-adjust: 100%; }'
 
-    Array.prototype.forEach.call(item.cssRules, (rule) => {
+  const getCssRules = (item: CSSStyleSheet) => {
+    try {
+      return item.cssRules
+    } catch (error) {
+      console.warn('Failed to get css rules', error)
+      return []
+    }
+  }
+
+  Array.prototype.forEach.call(renderIframe.contentDocument!.styleSheets, (item: CSSStyleSheet) => {
+    const node = item.ownerNode as HTMLElement | null
+    const flag = (node?.tagName === 'STYLE' && node.getAttribute(DOM_ATTR_NAME.SKIP_EXPORT) !== 'true') ||
+      Array.prototype.some.call(getCssRules(item), (rule: CSSRule) => {
+        return rule.cssText.includes('--common-styles')
+      })
+
+    Array.prototype.forEach.call(getCssRules(item), (rule) => {
       if (rule.selectorText && (
         flag ||
-        rule.selectorText.includes('.' + DOM_CLASS_NAME.PREVIEW_MARKDOWN_BODY) ||
-        rule.selectorText.startsWith('.katex')
+        rule.selectorText.includes('.' + DOM_CLASS_NAME.PREVIEW_MARKDOWN_BODY)
       )) {
         // skip contain rules
         if (rule?.style?.getPropertyValue('--skip-contain')) {
@@ -169,6 +233,14 @@ export async function getContentHtml (options: BuildInHookTypes['VIEW_ON_GET_HTM
         node.removeAttribute('title')
       }
 
+      if (node.tagName === 'A' && node.getAttribute('href')?.startsWith('#')) {
+        node.removeAttribute('target')
+      }
+
+      if (node.tagName === 'AUDIO') {
+        node.removeAttribute('preload')
+      }
+
       const len = node.children.length
       for (let i = len - 1; i >= 0; i--) {
         const ele = node.children[i]
@@ -182,7 +254,7 @@ export async function getContentHtml (options: BuildInHookTypes['VIEW_ON_GET_HTM
     return div.innerHTML || ''
   }
 
-  let html = getActionHandler('view.get-content-html')()
+  let html = getActionHandler('view.get-content-html')(options.onlySelected)
     .replace(/ src="/g, ' loading="lazy" src="')
 
   if (inlineStyle) {
@@ -252,6 +324,7 @@ export function getHeadings (withActivated = false): Heading[] {
     return {
       tag,
       class: `heading ${node.className} tag-${tag}`,
+      id: node.id,
       text: node.textContent || '',
       level: tags.indexOf(tag),
       sourceLine: parseInt(node.dataset.sourceLine || '0'),
@@ -287,7 +360,7 @@ export function exitPresent () {
  * @param flag
  */
 export function toggleAutoPreview (flag?: boolean) {
-  store.commit('setAutoPreview', typeof flag === 'boolean' ? flag : !store.state.autoPreview)
+  store.state.autoPreview = typeof flag === 'boolean' ? flag : !store.state.autoPreview
 }
 
 /**
@@ -295,7 +368,7 @@ export function toggleAutoPreview (flag?: boolean) {
  * @param flag
  */
 export function toggleSyncScroll (flag?: boolean) {
-  store.commit('setSyncScroll', typeof flag === 'boolean' ? flag : !store.state.syncScroll)
+  store.state.syncScroll = typeof flag === 'boolean' ? flag : !store.state.syncScroll
 }
 
 /**
@@ -313,9 +386,9 @@ export function tapContextMenus (fun: BuildContextMenu) {
 export function switchPreviewer (name: string) {
   const oldPreviewer = store.state.previewer
   if (ioc.get('VIEW_PREVIEWER').some((item) => item.name === name)) {
-    store.commit('setPreviewer', name)
+    store.state.previewer = name
   } else {
-    store.commit('setPreviewer', 'default')
+    store.state.previewer = 'default'
   }
 
   if (oldPreviewer !== store.state.previewer) {
@@ -409,14 +482,21 @@ export function getRenderIframe (): Promise<HTMLIFrameElement> {
 /**
  * Add styles to default preview.
  * @param style
+ * @param skipExport
  * @return css dom
  */
-export async function addStyles (style: string) {
+export async function addStyles (style: string, skipExport = false) {
   const iframe = await getRenderIframe()
   const document = iframe.contentDocument!
   const css = document.createElement('style')
   css.id = 'style-' + Math.random().toString(36).slice(2, 9) + '-' + Date.now()
+
+  if (skipExport) {
+    css.setAttribute(DOM_ATTR_NAME.SKIP_EXPORT, 'true')
+  }
+
   css.innerHTML = style
+
   document.head.appendChild(css)
 
   return css
@@ -461,6 +541,10 @@ registerHook('VIEW_RENDER_IFRAME_READY', ({ iframe }) => {
 
 registerAction({
   name: 'view.enter-presentation',
+  forUser: true,
+  forMcp: true,
+  description: t('command-desc.view_enter-presentation'),
+  mcpDescription: 'Enter presentation mode. No args. No return.',
   handler: () => present(true),
   keys: ['F5']
 })
@@ -478,10 +562,4 @@ registerAction({
         .filter(x => x.tagName === 'DIV' && x.clientWidth > 10 && x.clientHeight > 10)
         .length < 2
   }
-})
-
-registerCommand({
-  id: 'view.refresh',
-  handler: refresh,
-  keys: [CtrlCmd, 'r']
 })
